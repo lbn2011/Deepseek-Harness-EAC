@@ -99,8 +99,11 @@ jobs:
       - name: Rust 原生模块测试
         run: npm run test:native
 
-      - name: Tauri 壳测试
-        run: cargo test --manifest-path ../tauri-shell/Cargo.toml
+      - name: Tauri 壳测试（先建 staged-resources 占位，满足 tauri-build 资源校验）
+        shell: bash
+        run: |
+          mkdir -p ../tauri-shell/staged-resources/sidecar ../tauri-shell/staged-resources/dsh-desktop
+          cargo test --manifest-path ../tauri-shell/Cargo.toml
 
       - name: Node 测试
         run: npm test

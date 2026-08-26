@@ -85,8 +85,11 @@ jobs:
       - name: 预构建 TypeScript（生成 sidecar/bridge.js 供壳层 include_str! 引用）
         run: npm run build
 
-      - name: Tauri 壳测试
-        run: cargo test --manifest-path ../tauri-shell/Cargo.toml
+      - name: Tauri 壳测试（先建 staged-resources 占位，满足 tauri-build 资源校验）
+        shell: bash
+        run: |
+          mkdir -p ../tauri-shell/staged-resources/sidecar ../tauri-shell/staged-resources/dsh-desktop
+          cargo test --manifest-path ../tauri-shell/Cargo.toml
 
       - name: Node 测试（超时自动重试，最多 3 次）
         uses: nick-fields/retry@v3
