@@ -68,6 +68,30 @@ function copyRequired(src, dest, label) {
   cpSync(src, dest);
 }
 
+// 整个 lib/ 树递归装配（只收运行产物 .js/.cjs/.mjs/.json，排除 .map/.ts）。
+// 手维护清单曾漏装 lib/logger、lib/plugin-guard、lib/client-update、
+// lib/renderer-recovery（根 logger.js/plugin-guard.js 是门面，转发到这些子目录），
+// 导致打包态 sidecar 启动 MODULE_NOT_FOUND——整树装配消除该类问题。
+function copyLibTree() {
+  const srcRoot = path.join(dd, 'lib');
+  const dstRoot = path.join(staged, 'dsh-desktop', 'lib');
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const src = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(src);
+        continue;
+      }
+      if (!/\.(?:js|cjs|mjs|json)$/i.test(entry.name)) continue;
+      const rel = path.relative(srcRoot, src);
+      const dst = path.join(dstRoot, rel);
+      mkdirSync(path.dirname(dst), { recursive: true });
+      cpSync(src, dst);
+    }
+  };
+  walk(srcRoot);
+}
+
 function pluginEntrypoints(pkg) {
   const result = [];
   const add = (value) => {
@@ -134,10 +158,8 @@ for (const f of ROOT_FILES) {
   const src = path.join(dd, f);
   copyRequired(src, path.join(staged, 'dsh-desktop', f), '根模块');
 }
-console.log('[stage] 统一 lib 隔离体系（lib 模块 + shared 协议 + 原生 .node）');
-for (const f of LIB_VNEXT) {
-  copyRequired(path.join(dd, 'lib', f), path.join(staged, 'dsh-desktop', 'lib', f), 'vnext 库');
-}
+console.log('[stage] 统一 lib 隔离体系（整个 lib/ 运行产物递归装配 + shared 协议 + 原生 .node）');
+copyLibTree();
 for (const f of SIDECAR_UI_FILES) {
   copyRequired(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f), 'sidecar 面板');
 }
