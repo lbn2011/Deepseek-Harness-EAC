@@ -4,7 +4,7 @@
 //
 // 布局（= main.rs resource_root() 的约定）：
 //   staged-resources/sidecar/server.js|bridge.js|rescue-integration.js
-//   staged-resources/dsh-desktop/<Electron 时代的精确文件清单 + 生产 node_modules
+//   staged-resources/dsh-desktop/<旧壳时代的精确文件清单 + 生产 node_modules
 //                              + assets + vendor/node + vendor/npm>
 //
 // 用法：node stage-resources.mjs [--target=win32|linux] [--skip-npm]
@@ -25,7 +25,7 @@ if (targetPlatform !== 'win32' && targetPlatform !== 'linux') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
 
-// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 已废弃，不再打包）。
+// 人工同步：新增根模块要加进来（旧壳时代的 main.js / preload.js 已废弃，不再打包）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
   'balance.js', 'session-watcher.js', 'session-encoding-heal.js', 'profile-module-heal.js',
@@ -46,6 +46,7 @@ const SCRIPTS = [
 // 门面，转发到这些子目录），导致打包态 sidecar 启动 MODULE_NOT_FOUND——
 // 整树装配消除该类问题。副本装配见 copyLibTree()。
 const NATIVE_MODULES = ['supervisor/index.node', 'snapshot/index.node'];
+const SIDECAR_UI_FILES = ['snapshot-ui.js'];
 
 function requireFile(file, label) {
   if (!existsSync(file) || !statSync(file).isFile()) {
@@ -230,7 +231,10 @@ console.log('[stage] 编译 TypeScript（tsc 就地产物）');
 execSync('npx tsc -p tsconfig.json', { cwd: dd, stdio: 'inherit' });
 
 console.log('[stage] sidecar 产物');
-for (const f of ['server.js', 'bridge.js', 'rescue-integration.js']) {
+for (const f of ['server.js', 'bridge.js', 'ping.js', 'rescue-integration.js', 'ipc-surface.js']) {
+  cpSync(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f));
+}
+for (const f of SIDECAR_UI_FILES) {
   cpSync(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f));
 }
 

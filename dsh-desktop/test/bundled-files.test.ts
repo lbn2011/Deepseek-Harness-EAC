@@ -24,8 +24,16 @@ test('sidecar 五个入口与快照面板都进入装配清单', () => {
 });
 
 test('统一模块运行闭包中的关键文件都进入装配清单', () => {
-  for (const file of ['host-bootstrap.js', 'host-ctx.js', 'server.js', 'ipc/index.js', 'snapshot/manager.js', 'recovery-center/register-sidecar.js']) {
-    assert.match(stage, new RegExp(`['"]${file.replace('/', '\\/').replace('.', '\\.')}['"]`), `装配清单缺少 ${file}`);
+  // 根模块走 ROOT_FILES 清单；lib 闭包走 copyLibTree 整树递归装配——
+  // 手维护清单曾漏装子目录（lib/logger 等），整树装配保证源存在即随包。
+  assert.match(stage, /function copyLibTree\(\)/);
+  assert.match(stage, /srcRoot = path\.join\(dd, 'lib'\)/);
+  for (const file of ['host-bootstrap.js']) {
+    assert.match(stage, new RegExp(`['"]${file.replace('.', '\\.')}['"]`), `装配清单缺少 ${file}`);
+  }
+  for (const file of ['host-ctx.js', 'server.js', 'ipc/index.js', 'snapshot/manager.js', 'recovery-center/register-sidecar.js']) {
+    const src = join(desktop, 'lib', file);
+    assert.equal(existsSync(src), true, `lib 源闭包缺少 ${file}（copyLibTree 整树装配会随之漏装）`);
   }
 });
 

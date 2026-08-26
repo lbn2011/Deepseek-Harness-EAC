@@ -10,7 +10,7 @@
 //      sidecar 运行时新依赖 lib/host-ctx.js 必须在 stage-resources 清单。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -174,7 +174,11 @@ test('Tauri sidecar 装配统一 HostCtx', () => {
   assert.match(sidecarSrc, /shell\.quit-for-update/, 'sidecar requestQuit 须走壳层有界收口通道');
 });
 
-test('打包清单：sidecar 运行时依赖 lib/host-ctx.js 已入 stage-resources 清单', () => {
+test('打包清单：sidecar 运行时依赖 lib/host-ctx.js 已入装配链', () => {
   const stageSrc = readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
-  assert.match(stageSrc, /'host-ctx\.js'/, 'LIB_VNEXT 须含 host-ctx.js（否则打包态 sidecar 启动即 MODULE_NOT_FOUND）');
+  // copyLibTree 整树递归装配 lib/ 运行产物（替代手维护 LIB_VNEXT 清单），
+  // 源 lib/host-ctx.js 存在即随包；同时断言整树装配函数在岗。
+  assert.match(stageSrc, /function copyLibTree\(\)/, 'stage-resources 须含 copyLibTree 整树装配');
+  const src = join(root, 'lib', 'host-ctx.js');
+  assert.equal(existsSync(src), true, '源 lib/host-ctx.js 必须存在（copyLibTree 随之装配，否则打包态 sidecar 启动即 MODULE_NOT_FOUND）');
 });

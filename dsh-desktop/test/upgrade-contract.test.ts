@@ -45,41 +45,41 @@ test('Tauri 安装钩子接管旧壳且不触碰用户数据', () => {
 });
 
 test('Tauri 旧壳接管读取卸载器与安装目录注册表值', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
   assert.match(block, /ReadRegStr \$0[\s\S]*"UninstallString"/);
   assert.match(block, /ReadRegStr \$1[\s\S]*"InstallLocation"/);
 });
 
 test('Tauri 旧壳接管剥离卸载器路径的整串引号', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
   assert.match(block, /\$\{If\} \$4 == '\"'[\s\S]*StrCpy \$3 \$3 "" 1[\s\S]*StrCpy \$3 \$3 -1/);
 });
 
 test('Tauri 旧壳接管剥离安装目录的整串引号', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
   assert.match(block, /\$\{If\} \$2 == '\"'[\s\S]*StrCpy \$1 \$1 "" 1[\s\S]*StrCpy \$1 \$1 -1/);
 });
 
 test('Tauri 旧壳接管仅对非盘符根目录剥离尾反斜杠', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
   assert.match(block, /\$\{If\} \$2 > 3[\s\S]*\$\{If\} \$2 == '\\'[\s\S]*StrCpy \$1 \$1 -1/);
 });
 
 test('Tauri 旧壳接管仅执行真实存在的卸载器', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
   assert.match(block, /\$\{If\} \$\{FileExists\} "\$3"[\s\S]*ExecWait/);
   assert.match(block, /\$\{Else\}[\s\S]*卸载器缺失/);
 });
 
 test('Tauri 旧壳卸载命令使用清洗路径与裸 _?= 安装目录', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
   assert.match(block, /ExecWait '\"\$3\" \/S _\?=\$1'/);
   assert.doesNotMatch(block, /_\?="\$1"/);
 });
 
 test('Tauri 旧壳接管无论卸载器状态都会清理旧卸载键', () => {
-  const block = macroBlock('DSH_TakeoverOldShell KEYNAME');
-  assert.match(block, /DeleteRegKey HKCU[\s\S]*\$\{KEYNAME\}/);
+  const block = macroBlock('DSH_TakeoverOldShell HIVE KEYNAME');
+  assert.match(block, /DeleteRegKey \$\{HIVE\}[\s\S]*\$\{KEYNAME\}/);
 });
 
 test('Tauri 进程终止宏按镜像名强制回收完整进程树', () => {
@@ -101,8 +101,8 @@ test('Tauri 预安装不使用 cmd 管道、网络等待或缺失插件', () => 
 
 test('Tauri 预安装接管产品名与应用标识两个旧卸载键', () => {
   const block = macroBlock('NSIS_HOOK_PREINSTALL');
-  assert.match(block, /DSH_TakeoverOldShell "Deepseek Harness EAC"/);
-  assert.match(block, /DSH_TakeoverOldShell "com\.deepseek\.dsh\.desktop"/);
+  assert.match(block, /DSH_TakeoverOldShell (?:HKCU|HKLM) "Deepseek Harness EAC"/);
+  assert.match(block, /DSH_TakeoverOldShell (?:HKCU|HKLM) "com\.deepseek\.dsh\.desktop"/);
 });
 
 test('Tauri 安装钩子的删除动作不触碰用户数据目录', () => {

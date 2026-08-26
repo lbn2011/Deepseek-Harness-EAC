@@ -1,12 +1,12 @@
 ; Deepseek Harness EAC — Tauri NSIS 安装钩子。
 ; 职责：
-;   1. Electron → Tauri 无缝接管（v5.0 切换）+ Tauri 覆盖升级清理：
+;   1. 旧壳 → Tauri 无缝接管（v5.0 切换）+ Tauri 覆盖升级清理：
 ;      检测旧壳卸载键（HKCU/HKLM 双 hive），静默卸载旧版再安装 ——
 ;      同安装目录、同快捷方式名，用户数据（%APPDATA%\Deepseek Harness EAC
 ;      与 ~/.dsh）不受影响。
-;      R6 实测修正：electron-builder NSIS 的卸载键名 = **productName**
+;      R6 实测修正：旧壳 NSIS 的卸载键名 = **productName**
 ;      （"Deepseek Harness EAC"），不是应用 identifier（com.deepseek.dsh.desktop）。
-;      三个候选键名都探测（productName、Electron identifier、
+;      三个候选键名都探测（productName、旧壳 identifier、
 ;      Tauri identifier），并同时查 HKCU 与 HKLM —— 旧版若曾 perMachine
 ;      安装（HKLM hive），只查 HKCU 会漏掉 → 已安装列表出现两个版本
 ;      （issue #224）。
@@ -88,7 +88,7 @@
   ; 句柄异步释放，给文件系统一点缓冲（NSIS 原生 Sleep，不产生网络行为）。
   Sleep 2000
   ; 三个候选键名 × HKCU/HKLM 双 hive：覆盖
-  ;   - Electron 时代（productName 键 / com.deepseek.dsh.desktop 键，含
+  ;   - 旧壳时代（productName 键 / com.deepseek.dsh.desktop 键，含
   ;     perMachine 安装残留在 HKLM 的情况）；
   ;   - Tauri 自身旧版（productName 键与 com.deepseek.dsh.desktop.tauri 键）。
   ; HKLM 只读/删除失败走 best-effort（currentUser 安装器无提权），

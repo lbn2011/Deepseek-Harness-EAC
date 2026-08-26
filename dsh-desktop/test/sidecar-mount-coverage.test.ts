@@ -46,7 +46,11 @@ test('sidecar 全部 TypeScript 使用标准 import 且主 tsconfig 直接编译
 test('Tauri 装配清单不再复制 lib/desktop，统一 lib 运行闭包齐全', () => {
   const stage = readFileSync(join(repo, 'tauri-shell', 'stage-resources.mjs'), 'utf8');
   assert.doesNotMatch(stage, /const LIB_DESKTOP/);
+  // copyLibTree 整树递归装配 lib/ 运行产物——源闭包存在即随包（替代逐个
+  // 手列 string literal，手维护曾漏装 lib/logger 等子目录）。
+  assert.match(stage, /function copyLibTree\(\)/);
   for (const file of ['ipc/index.js', 'ipc/transport.js', 'snapshot/manager.js', 'snapshot/scheduler.js', 'server.js', 'paths.js', 'proc.js']) {
-    assert.match(stage, new RegExp(`['\"]${file.replace('/', '\\/')}['\"]`), `stage 缺少 ${file}`);
+    const src = join(repo, 'dsh-desktop', 'lib', file);
+    assert.equal(existsSync(src), true, `lib 源闭包缺少 ${file}（copyLibTree 整树装配会随之漏装）`);
   }
 });
