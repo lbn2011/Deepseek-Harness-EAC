@@ -29,19 +29,36 @@ export function nodeRuntimeRelativePath(platform: NodeJS.Platform): string {
     : path.join('vendor', 'node', 'bin', 'node');
 }
 
-/** 内置 node.exe：打包后在 resources/node/，开发态在 vendor/node/。 */
+/**
+ * 内置 node.exe。
+ *
+ * 布局随宿主而异：Tauri 打包/开发把 node 放在 <dsh-desktop>/vendor/node/
+ * （lib/proc.js 的 __dirname 即 <dsh-desktop>/lib，相对定位天然命中）；只有
+ * legacy-shell（Electron）把 node 放在 resources/node/（asar 之外）。因此
+ * 优先走 __dirname 相对定位（覆盖开发态 + Tauri 打包态），不存在时再回退
+ * legacy-shell 的 resourcesPath()/node/。此前直接按 isPackaged 切到
+ * resourcesPath()/node/，而 Tauri sidecar 恒置 DSH_RESOURCE_ROOT → isPackaged
+ * 恒真，导致打包/开发态都解析到不存在的 <root>/node/node.exe，boot.start
+ * 报「找不到内置 Node 运行时」（退出码 boot）。
+ */
 export function nodeExe(): string {
   const host = hostCtx();
-  const executable = process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node');
-  if (host.isPackaged()) return path.join(host.resourcesPath(), 'node', executable);
-  return path.resolve(__dirname, '..', nodeRuntimeRelativePath(process.platform));
+  const rel = path.resolve(__dirname, '..', nodeRuntimeRelativePath(process.platform));
+  if (fs.existsSync(rel)) return rel;
+  if (host.isPackaged()) {
+    const executable = process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node');
+    return path.join(host.resourcesPath(), 'node', executable);
+  }
+  return rel;
 }
 
-/** 内置 npm CLI 入口：与 node.exe 同源的 vendor npm 分发。 */
+/** 内置 npm CLI 入口：与 node.exe 同源的 vendor npm 分发（布局同 nodeExe）。 */
 export function npmCli(): string {
   const host = hostCtx();
+  const rel = path.resolve(__dirname, '..', 'vendor', 'npm', 'bin', 'npm-cli.js');
+  if (fs.existsSync(rel)) return rel;
   if (host.isPackaged()) return path.join(host.resourcesPath(), 'npm', 'bin', 'npm-cli.js');
-  return path.resolve(__dirname, '..', 'vendor', 'npm', 'bin', 'npm-cli.js');
+  return rel;
 }
 
 /** 传给 updater 模块的共享上下文（Task 1.x 起由 lib 层统一提供）。 */
