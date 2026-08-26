@@ -250,6 +250,16 @@ export function buildApplyScript(p: ApplyScriptParams): string[] {
       '  echo %TS% > "%UD%\\updates\\.backup-ts"',
       ')',
       'del "%SETUP%" >nul 2>&1',
+      // 静默安装成功后主动拉起新版本：electron-builder assistedInstaller 的
+      // MUI_FINISHPAGE_RUN 挂在 finish 页渲染上，/S 静默模式不渲染该页 →
+      // 自更新后无任何重启动作（v4.4 用户实测「程序关闭后不自动重开，版本
+      // 仍 4.4.0」）。与失败路径拉起旧版（start "%OLD%"）对称，这里拉起
+      // 安装目录里的新主程序（Tauri / Electron 两个 exe 名都探测）。
+      // （上游 issue #XX 移植）
+      'if not "%INST%" == "" (',
+      '  if exist "%INST%\\dsh-eac-shell.exe" start "" "%INST%\\dsh-eac-shell.exe"',
+      '  if exist "%INST%\\Deepseek Harness EAC.exe" start "" "%INST%\\Deepseek Harness EAC.exe"',
+      ')',
       // (goto) 2>nul 先终止批处理上下文，其后的 del/exit 在批处理之外
       // 执行：直接 del 自身再写 exit /b 0 的话，cmd 自删后读不到下一行，
       // 批处理异常终止（退出码 1）。

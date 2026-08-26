@@ -21,7 +21,8 @@ import { healProfileModuleShadowing } from '../profile-module-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { hostCtx } from './host-ctx.js';
-import { IS_WIN } from './proc.js';
+import { IS_WIN, updCtx } from './proc.js';
+import * as updater from '../updater.js';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './paths.js';
 import { COMPANION_PLUGINS, RETIRED_BUILTIN_PLUGINS, builtinPluginSourceDir } from './plugin-registry-data.js';
 import { readJsonFile, copyPluginPackage } from './plugin-copy.js';
@@ -165,6 +166,43 @@ export function ensurePluginHostDeps(profileDirP: string): void {
   }
 }
 
+/**
+ * 退役清理的「升级对齐门控」（上游 issue #74 移植）：删除性手术只在应用版本
+ * 变化后的首次启动执行一次 —— 升级时清掉上一版本退役插件残留；同一版本内
+ * 用户手动恢复/调整的插件树（管理页开关、市场安装的同类包）不再被每次启动
+ * 强制改写。settings 键 pluginTreeAlignedVersion 记录已对齐的应用版本。
+ */
+function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
+  let version = '';
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8')) as { version?: string };
+    version = typeof pkg.version === 'string' ? pkg.version : '';
+  } catch {
+    // 读不到版本时退回无条件清理（旧语义）。
+  }
+  if (!version) {
+    retireRemovedBuiltinPlugins(profileDirP);
+    return;
+  }
+  try {
+    const c = updCtx();
+    const settings = updater.loadSettings(c) as Record<string, unknown>;
+    if (settings && settings.pluginTreeAlignedVersion === version) {
+      log('boot', `已在本版本（${version}）对齐过内置插件树，跳过退役清理（用户调整优先）`);
+      return;
+    }
+    retireRemovedBuiltinPlugins(profileDirP);
+    const next = settings && typeof settings === 'object'
+      ? { ...settings, pluginTreeAlignedVersion: version }
+      : { pluginTreeAlignedVersion: version };
+    updater.saveSettings(c, next);
+    log('boot', `已在本版本（${version}）完成内置插件树对齐`);
+  } catch (err) {
+    log('boot', '记录插件树对齐版本失败，按旧语义清理: ' + String((err as Error).message));
+    retireRemovedBuiltinPlugins(profileDirP);
+  }
+}
+
 /** 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。 */
 export function retireRemovedBuiltinPlugins(profileDirP: string): void {
   for (const p of RETIRED_BUILTIN_PLUGINS) {
@@ -218,7 +256,7 @@ export function syncCompanionPlugins(): void {
     ensureDesktopProfileInit();
     // 清理已退役内置插件（tdai-memory 等）在 profile 的残留，避免
     // 「行在包被清」拖垮插件树或退役插件继续加载。
-    retireRemovedBuiltinPlugins(desktopProfileDir());
+    retireRemovedBuiltinPluginsGated(desktopProfileDir());
     // V4 运行时补丁（幂等）：对话删除/归档 —— dsh-session-manager 的前置依赖。
     applySessionManageFix();
     const profileDirP = desktopProfileDir();

@@ -41,6 +41,28 @@ import { desktopProfile, desktopProfileDir } from './paths.js';
 import { bridge } from './bridge.js';
 import { allowBuilds } from './market-modules.js';
 
+/**
+ * 「完全访问」用户选择 → 进程级部署默认（上游 issue #196 移植）：UI 把默认
+ * 权限写进设置文档的 permission.defaultPreset（只影响未来新会话）；若不提升
+ * 为部署级 sandbox.mode，设置了的用户在写工作区外/经旧会话时仍被
+ * workspace-write 拒绝。DSH_PERMISSION_MODE 由内核 dsh-base/cordis.patch.yml
+ * 的 !!js process.env 行消费，注入后 approval 联动降为 never。
+ * 宽松文本匹配（settings.yaml 结构稳定；解析失败宁可返回 null 不注入，
+ * 也绝不误判成完全访问）。
+ */
+function userDefaultPreset(): 'danger-full-access' | null {
+  try {
+    const home = state.dshHome || path.join(os.homedir(), '.dsh');
+    if (!home) return null;
+    const file = path.join(home, 'settings.yaml');
+    if (!fs.existsSync(file)) return null;
+    const text = fs.readFileSync(file, 'utf8');
+    return /defaultPreset:\s*danger-full-access\b/.test(text) ? 'danger-full-access' : null;
+  } catch {
+    return null;
+  }
+}
+
 /** dsh 子进程环境：剔除 harness/session 残留变量，保留其余（代理/API Key）。 */
 export function childEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -58,6 +80,9 @@ export function childEnv(): NodeJS.ProcessEnv {
   // MCP 等）据此把安装/读写落到桌面专属 profile，而不是原生的 web profile。
   env.DSH_DESKTOP = '1';
   env.DSH_DESKTOP_PROFILE = desktopProfile();
+  if (state.dshHome && userDefaultPreset() === 'danger-full-access') {
+    env.DSH_PERMISSION_MODE = 'danger-full-access';
+  }
   env.NO_COLOR = '1';
   // VNext Phase 2：Core Bridge 回环端点（受信组件据此回调 Supervisor 调用
   // 隔离插件工具/收集上下文；仅回环 + 每会话一次性 token）。

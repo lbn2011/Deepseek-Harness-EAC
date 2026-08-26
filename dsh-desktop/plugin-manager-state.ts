@@ -27,6 +27,17 @@ interface PatchEntryLike {
 }
 
 /** 管理页插件行。 */
+// 内核 bundle 白名单（去 scope 后的短名）：dsh 官方 web profile 的骨架
+// 注册点，禁用会破坏界面 → 管理页锁定为 core；bundles 里的其余条目
+// （市场 / dsh plugin add 装入的第三方包）归入 other 组、可开关。
+// （上游 issue #212 移植）
+const KERNEL_BUNDLE_IDS = new Set([
+  'dsh-base',
+  'dsh-web-app',
+  'web-app',
+  'web-runtime',
+  'client-modules',
+]);
 export interface PluginRow {
   id: string;
   name: string;
@@ -116,7 +127,7 @@ export function collectPluginRows(entries: unknown[], ctx: CollectRowsCtx = {}):
   for (const name of bundles) {
     if (companionNames.has(name)) continue;
     const id = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
-    if (!seen.has(id)) addRow(id, name, 'core');
+    if (!seen.has(id)) addRow(id, name, KERNEL_BUNDLE_IDS.has(id) ? 'core' : 'other');
   }
   const order: Record<PluginRow['group'], number> = { companion: 0, other: 1, core: 2 };
   return rows.sort((a, b) => order[a.group] - order[b.group] || a.id.localeCompare(b.id));
