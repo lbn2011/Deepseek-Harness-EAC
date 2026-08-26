@@ -1,35 +1,41 @@
-'use strict';
+/**
+ * patch-row-heal.ts — cordis.patch.yml 行修复器（Task 7.1 自 patch-row-heal.js
+ * 迁 TS）。
+ *
+ * v2.0.0 的 dsh-soul-md 历史事故：插件 config schema 声明 `path` 为必填且无
+ * 默认值，而 syncCompanionPlugins 写的 patch 行只有 id + name（无 config）。
+ * 全新安装时该行校验失败拖垮整棵插件树：`dsh web` 退出码 1、应用「启动失败」
+ * 持续崩溃循环（exe 每次启动都重同步该行，用户删不掉）。
+ *
+ * 现在插件 schema 已默认 `path = "soul.md"`（文件缺失 → 空回退 → 无
+ * prompt section → 官方系统提示词原样生效），无 config 的行也能启动。新行
+ * 由 sync 显式带 config 块（见 configLinesFor），本修复器负责修好存量用户
+ * profile 里的坏行 —— 升级到修复版即自愈，无需手工编辑。
+ */
 
-const fs = require('fs');
-const path = require('path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-// cordis.patch.yml row heal for dsh-soul-md.
-//
-// v2.0.0 shipped the bundled dsh-soul-md plugin whose config schema declared
-// `path` as REQUIRED with no default, while the profile patch row written by
-// syncCompanionPlugins carried only id + name (no config). On a fresh install
-// config validation then failed for that row, which took down the ENTIRE
-// plugin tree: `dsh web` exited with code 1 and the app showed "启动失败"
-// (persistent crash loop — the exe re-syncs the row on every boot, so users
-// could not delete their way out of it).
-//
-// The plugin schema now defaults `path` to "soul.md" (missing file → empty
-// fallback → NO prompt section → the stock official system prompt is used
-// untouched), so a config-less row boots fine again. New rows are also
-// written WITH an explicit config block (see configLinesFor below), and this
-// heal pass fixes ALREADY-BROKEN rows living in existing user profiles, so
-// upgrading to the fixed build repairs them without any manual edit.
+/** 修复结果：修复后的 patch 文本 + 被修改的行 id 列表。 */
+export interface HealResult {
+  patch: string;
+  healed: string[];
+}
+
+/** 去重结果。 */
+export interface DedupeResult {
+  patch: string;
+  removed: string[];
+}
 
 /**
- * Serialize a config object as patch-row YAML lines. `baseIndent` is the
- * indentation of the row's `- id:` line: insert-block rows sit at 4 spaces
- * (config at 6, keys at 8 — the legacy default), while top-level rows
- * written by the plugin manager / onboarding wizard sit at 0 (config at 2,
- * keys at 4). A config block at the wrong step is a YAML parse error that
- * takes down the whole plugin tree (`dsh web` exits 1), so the step must
- * always mirror the row it belongs to.
+ * 把 config 对象序列化为 patch 行的 YAML 缩进块。`baseIndent` 是行
+ * `- id:` 的缩进：insert 内层行在 4 空格（config 在 6、键在 8 —— 旧默认），
+ * 插件管理器/向导写的顶层行在 0（config 在 2、键在 4）。缩进层级错配是
+ * YAML 解析错误，会拖垮整棵插件树（`dsh web` 退出 1），层级必须始终跟随
+ * 所属行。
  */
-function configLinesFor(config: Record<string, unknown>, baseIndent = 4): string {
+export function configLinesFor(config: Record<string, unknown> | null | undefined, baseIndent = 4): string {
   const step = ' '.repeat(baseIndent + 2);
   const step2 = ' '.repeat(baseIndent + 4);
   let out = `${step}config:\n`;
@@ -40,40 +46,38 @@ function configLinesFor(config: Record<string, unknown>, baseIndent = 4): string
 }
 
 /**
- * Rewrite a row's config block to the indentation matching its own `- id:`
- * line (config must sit at id-indent + 2, keys at + 4 — the same level as
- * `name:`). Heals rows that a pre-wizard build broke by appending a 6-space
- * config block to a TOP-LEVEL row (`- id: x` at column 0): that mix is a
- * YAML mapping-entry indentation error, and since the row already carries a
- * config key the "missing config" healers leave it untouched forever.
- * Idempotent; returns the patch unchanged when nothing needs fixing.
+ * 把行的 config 块重写为与其自身 `- id:` 行匹配的缩进（config 在
+ * id 缩进 + 2，键在 + 4 —— 与 `name:` 同层）。修复 pre-wizard 构建把
+ * 6 空格 config 块追加到顶层行（`- id: x` 顶格）留下的坏档：那是 YAML
+ * mapping-entry 缩进错误，且该行已带 config 键，「缺 config」类修复器
+ * 永远不会再碰它。幂等；无需修复时原样返回。
  */
-function normalizeRowConfigIndent(patch: string, id: string): string {
+export function normalizeRowConfigIndent(patch: string, id: string): string {
   if (typeof patch !== 'string' || patch === '' || !id) return patch;
   const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const rowRe = new RegExp(`^([\\t ]*)- id: ${esc}(?![A-Za-z0-9_.-])`);
   const lines = patch.split(/\r?\n/);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = rowRe.exec(lines[i]!);
-    if (!m) continue;
-    const idIndent = m[1]!.replace(/\t/g, '  ').length;
+    const m = rowRe.exec(lines[i] as string);
+    if (!m || m[1] === undefined) continue;
+    const idIndent = m[1].replace(/\t/g, '  ').length;
     const wantConfig = ' '.repeat(idIndent + 2) + 'config:';
     for (let j = i + 1; j < lines.length; j++) {
-      const cur = lines[j]!;
+      const cur = lines[j] as string;
       const t = cur.trim();
       if (t === '' || /^#/.test(t)) continue;
       if (/^[\t ]*- id:/.test(cur) || t === 'insert:') break;
-      const curIndent = (cur.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length;
+      const curIndent = ((cur.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length;
       if (curIndent <= idIndent) break;
       if (!/^[\t ]*config:/.test(cur) || t !== 'config:') continue;
       if (cur !== wantConfig) {
         const diff = curIndent - (idIndent + 2);
         lines[j] = wantConfig;
         for (let k = j + 1; k < lines.length; k++) {
-          const kl = lines[k]!;
+          const kl = lines[k] as string;
           if (kl.trim() === '' || /^#/.test(kl)) continue;
-          const ki = (kl.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length;
+          const ki = ((kl.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length;
           if (ki <= idIndent + 2) break;
           lines[k] = ' '.repeat(ki - diff) + kl.trimStart();
         }
@@ -86,28 +90,26 @@ function normalizeRowConfigIndent(patch: string, id: string): string {
 }
 
 /**
- * Ensure every soul-md row in `patch` carries config.path.
- * Idempotent: rows that already have a config block are left untouched.
- * Returns { patch, healed } — healed lists row ids that were modified.
+ * 确保 patch 里的每个 soul-md 行都带 config.path。幂等：已有 config 块的
+ * 行不动。healed 列出被修改的行 id。
  */
-function healSoulMdPatchRow(patch: string, config: Record<string, unknown> = { path: 'soul.md' }): { patch: string; healed: string[] } {
+export function healSoulMdPatchRow(patch: string, config: Record<string, unknown> = { path: 'soul.md' }): HealResult {
   const healed: string[] = [];
   if (typeof patch !== 'string' || patch === '') return { patch, healed };
   const normalized = normalizeRowConfigIndent(patch, 'soul-md');
   if (normalized !== patch) healed.push('soul-md');
-  patch = normalized;
-  // A row looks like:
+  const p = normalized;
+  // 行形态：
   //   - insert:
   //       - id: soul-md
   //         name: 'dsh-soul-md'
-  //         (config: ... optional)
-  // or a top-level row (plugin manager / onboarding wizard, id at column 0).
-  // Match the `id:` + `name:` lines; only rewrite when the NEXT non-blank
-  // line is not a `config:` key (negative lookahead keeps healed rows stable).
-  // The config block mirrors the row's own indent (id indent + 2 / + 4).
+  //         (config: ... 可选)
+  // 或顶层行（插件管理器 / 向导，id 顶格）。匹配 id: + name: 两行；仅当
+  // 下一非空行不是 config: 键时才重写（负向先行断言保证已修行稳定）。
+  // config 块缩进镜像行自身缩进（id 缩进 + 2 / + 4）。
   const rowRe = /(^[\t ]*- id: soul-md\b[^\n]*\n[\t ]*name: ['"]?[^'"\n]+['"]?\n)(?![\t ]*config:)/gm;
-  let out = patch.replace(rowRe, (m) => m + configLinesFor(config, (m.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length));
-  if (out !== patch) healed.push('soul-md');
+  const out = p.replace(rowRe, (m) => m + configLinesFor(config, ((m.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length));
+  if (out !== p) healed.push('soul-md');
   return { patch: out, healed };
 }
 
@@ -117,24 +119,25 @@ function healSoulMdPatchRow(patch: string, config: Record<string, unknown> = { p
  * 拖垮整棵插件树（v3.1.0 全新安装即「启动失败」的根因；老用户因市场装
  * 过的行自带 config 才幸免）。
  *
- * V4.4 修复（重复 config 事故）：原实现只看 name 行后**紧跟**的一行——
- * 条目呈 `name → disabled → config` 形态（首次安装的向导/写入组合会产生）
- * 时，name 后紧跟 disabled 被误判为「缺 config」而补第二份 config，YAML
- * 报 duplicated mapping key 拖垮启动。现改为**扫描整个条目块**：id 行之后
- * 所有缩进更深的行里任意位置已有 config 键即不补（幂等，用户改过的值优先）。
+ * V4.4 修复（重复 config 事故，自 main #119 移植）：原实现只看 name 行后
+ * **紧跟**的一行 —— 条目呈 `name → disabled → config` 形态（首次安装的
+ * 向导/写入组合会产生）时，name 后紧跟 disabled 被误判为「缺 config」而
+ * 补第二份 config，YAML 报 duplicated mapping key 拖垮启动。现改为
+ * **扫描整个条目块**：id 行之后所有缩进更深的行里任意位置已有 config
+ * 键即不补（幂等，用户改过的值优先）。
  */
-function healRowConfig(patch: string, id: string, config: Record<string, unknown>): { patch: string; healed: string[] } {
+export function healRowConfig(patch: string, id: string, config: Record<string, unknown>): HealResult {
   const healed: string[] = [];
   if (typeof patch !== 'string' || patch === '' || !id || !config) return { patch, healed };
   const normalized = normalizeRowConfigIndent(patch, id);
   if (normalized !== patch) healed.push(id);
-  patch = normalized;
+  const p = normalized;
   const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const idLineRe = new RegExp(`^([\\t ]*)- id: ${esc}(?![A-Za-z0-9_.-])`);
-  const lines = patch.split(/\r?\n/);
+  const lines = p.split(/\r?\n/);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = idLineRe.exec(lines[i]!);
+    const m = idLineRe.exec(lines[i] ?? '');
     if (!m) continue;
     const idIndent = (m[1] || '').replace(/\t/g, '  ').length;
     // 条目块范围：id 行之后缩进更深的所有行（空行/注释/兄弟条目视为块结束）。
@@ -142,10 +145,10 @@ function healRowConfig(patch: string, id: string, config: Record<string, unknown
     let nameLine = -1;
     let hasConfig = false;
     while (blockEnd < lines.length) {
-      const cur = lines[blockEnd]!;
+      const cur = lines[blockEnd] ?? '';
       const t = cur.trim();
       if (t === '' || /^#/.test(t)) break;
-      const curIndent = (cur.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length;
+      const curIndent = ((cur.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length;
       if (curIndent <= idIndent) break;
       if (/^[\t ]*config:/.test(cur)) { hasConfig = true; break; }
       if (nameLine === -1 && /^[\t ]*name:/.test(cur)) nameLine = blockEnd;
@@ -164,108 +167,113 @@ function healRowConfig(patch: string, id: string, config: Record<string, unknown
 }
 
 /**
- * Collect the loader entry ids a bundle package declares through its own
- * cordis.patch.yml (or the `dsh.bundle.patch` file its package.json points
- * at). These are the ids the bundle itself mounts when loaded — an overlay
- * row carrying any of them is a duplicate regardless of that row's package
- * name. Returns a Set<string>; a missing/unparseable package contributes
- * nothing.
+ * 收集一个 bundle 包经自己的 cordis.patch.yml（或 package.json 的
+ * `dsh.bundle.patch` 指向的文件）声明的 loader entry id。这些是 bundle
+ * 被加载时自己挂载的 id —— overlay 行带其中任一 id 即为重复，与该行的
+ * 包名无关。包缺失/不可解析时不贡献任何 id。
  */
-function bundlePatchEntryIds(bundleDir: string): Set<string> {
+export function bundlePatchEntryIds(bundleDir: string | null): Set<string> {
   const ids = new Set<string>();
   if (!bundleDir) return ids;
   try {
     const pkgPath = path.join(bundleDir, 'package.json');
     if (!fs.existsSync(pkgPath)) return ids;
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
+      dsh?: { bundle?: unknown };
+    };
     const b = pkg && pkg.dsh && pkg.dsh.bundle;
     let patchRel = 'cordis.patch.yml';
     if (typeof b === 'string') patchRel = b;
-    else if (b && typeof b.patch === 'string') patchRel = b.patch;
+    else if (b && typeof (b as { patch?: unknown }).patch === 'string') patchRel = (b as { patch: string }).patch;
     const patch = fs.readFileSync(path.join(bundleDir, patchRel), 'utf8');
     const idRe = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
-    let m;
-    while ((m = idRe.exec(patch)) !== null) ids.add(m[1]!);
-  } catch { /* 包/补丁缺失或损坏 → 不贡献任何 id */ }
+    let m: RegExpExecArray | null;
+    while ((m = idRe.exec(patch)) !== null) {
+      if (m[1] !== undefined) ids.add(m[1]);
+    }
+  } catch {
+    /* 包/补丁缺失或损坏 → 不贡献任何 id */
+  }
   return ids;
 }
 
 /**
- * Union of the declared entry ids across every profile bundle package. The
- * sync pass uses this to (a) drop overlay rows that duplicate a bundle's own
- * mount and (b) refuse to write those rows back — covering git/fork installs
- * whose package name differs from the built-in companion's.
- * @param {string[]} bundleNames - profile `dsh.profile.bundles` list.
- * @param {string} profileNodeModules - `<profile>/node_modules`.
+ * profile 全部 bundle 包声明的 entry id 并集。同步流程用它
+ * (a) 丢弃与 bundle 自挂载重复的 overlay 行 (b) 拒绝把这些行写回 ——
+ * 覆盖包名与内置配套插件不同的 git/fork 安装。
+ * @param bundleNames profile 的 `dsh.profile.bundles` 列表
+ * @param profileNodeModules `<profile>/node_modules`
  */
-function collectBundleEntryIds(bundleNames: string[], profileNodeModules: string): Set<string> {
+export function collectBundleEntryIds(bundleNames: string[] | null | undefined, profileNodeModules: string): Set<string> {
   const ids = new Set<string>();
   for (const name of bundleNames || []) {
-    const dir = name
-      ? path.join(profileNodeModules, ...String(name).split('/'))
-      : '';
+    const dir = name ? path.join(profileNodeModules, ...String(name).split('/')) : '';
     for (const id of bundlePatchEntryIds(dir)) ids.add(id);
   }
   return ids;
 }
 
 /**
- * Remove insert-blocks for rows the profile already mounts through its
- * package.json bundle list (`dsh.profile.bundles`, written by `dsh plugin
- * add` — i.e. anything the user installed from the plugin market).
+ * 移除 profile 已通过 package.json bundle 列表（`dsh.profile.bundles`，
+ * `dsh plugin add` 写入 —— 即用户从插件市场装的任何东西）挂载的行的
+ * insert 块。
  *
- * A bundle listed there is loaded WITH its own packaged cordis.patch.yml,
- * which mounts the row itself. When syncCompanionPlugins has also written an
- * overlay row for the same plugin, the loader aborts the whole tree with
- * `duplicate loader entry id: <id>` (dsh web exits 1 → "启动失败" crash
- * loop). Dropping the overlay copy is safe: the bundle still mounts it.
+ * 列在其中的 bundle 连同自带 cordis.patch.yml 一起加载，patch 会挂载该行。
+ * 当 syncCompanionPlugins 又为同一插件写了 overlay 行时，loader 以
+ * `duplicate loader entry id: <id>` 中止整棵树（dsh web 退出 1 →「启动
+ * 失败」崩溃循环）。丢弃 overlay 副本是安全的：bundle 仍会挂载它。
  *
- * Two duplicate signals are honoured:
- *  - name-based (legacy): a `rowIds` row whose package name appears in the
- *    bundle list — matches npm/market installs where names line up;
- *  - id-based: the row's entry id is declared by ANY bundle patch
- *    (`bundleEntryIds`) — matches git/fork/link installs whose package name
- *    differs from the overlay row's (issue #16).
- *
- * Returns { patch, removed }.
+ * 两种重复信号都被处理：
+ *  - 按包名（旧路径）：rowIds 里包名出现在 bundle 列表 —— 匹配 npm/市场
+ *    安装（名字对得上）；
+ *  - 按 entry id：行的 entry id 被任一 bundle patch 声明（bundleEntryIds）
+ *    —— 匹配 git/fork/link 安装（包名与 overlay 行不同，issue #16）。
  */
-function removeBundledRowDuplicates(patch: string, rowIds: string[], bundleNames: string[], bundleEntryIds: Set<string>): { patch: string; removed: string[] } {
+export function removeBundledRowDuplicates(
+  patch: string,
+  rowIds: Record<string, string> | null | undefined,
+  bundleNames: string[] | null | undefined,
+  bundleEntryIds: Set<string> | null | undefined,
+): DedupeResult {
   const removed: string[] = [];
-  if (typeof patch !== 'string' || patch === ''
-    || (!bundleNames || !bundleNames.length) && (!bundleEntryIds || !bundleEntryIds.size)) {
+  if (
+    typeof patch !== 'string' ||
+    patch === '' ||
+    ((!bundleNames || !bundleNames.length) && (!bundleEntryIds || !bundleEntryIds.size))
+  ) {
     return { patch, removed };
   }
-  const declaredIds = bundleEntryIds && bundleEntryIds.size ? bundleEntryIds : new Set();
-  const nameTargets = new Set(Object.entries(rowIds || {})
-    .filter(([, pkg]) => (bundleNames || []).includes(pkg))
-    .map(([id]) => id));
-  const isDup = (id: string) => (id !== null && declaredIds.has(id)) || (id !== null && nameTargets.has(id));
+  const declaredIds = bundleEntryIds && bundleEntryIds.size ? bundleEntryIds : new Set<string>();
+  const nameTargets = new Set<string>(
+    Object.entries(rowIds || {})
+      .filter(([, pkg]) => (bundleNames || []).includes(pkg))
+      .map(([id]) => id),
+  );
+  const isDup = (id: string | null): boolean => (id !== null && declaredIds.has(id)) || (id !== null && nameTargets.has(id));
   const lines = patch.split(/\r?\n/);
-  const out = [];
+  const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+    const line = lines[i] as string;
     if (/^-\s*insert:/.test(line)) {
-      // Parse id + name from the block body (id must be the immediate next
-      // line to stay unambiguous).
+      // 从块体解析 id + name（id 必须是紧邻的下一行，保持无歧义）。
       let id: string | null = null;
       const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
-      if (mid) id = mid[1]!;
-      if (id !== null && isDup(id)) {
-        removed.push(id);
-        // Skip the block body: indented non-comment lines up to the next
-        // top-level key / block / comment / blank line.
+      if (mid && mid[1] !== undefined) id = mid[1];
+      if (isDup(id)) {
+        if (id !== null) removed.push(id);
+        // 跳过块体：缩进的非注释行，直到下一个顶层键 / 块 / 注释 / 空行。
         let j = i + 1;
-        while (j < lines.length && !/^-\s*insert:/.test(lines[j]!) && /^#/.test(lines[j]!) === false && /^\s+\S/.test(lines[j]!)) j++;
+        while (j < lines.length && !/^-\s*insert:/.test(lines[j] as string) && /^#/.test(lines[j] as string) === false && /^\s+\S/.test(lines[j] as string)) {
+          j++;
+        }
         i = j - 1;
         continue;
       }
     }
     out.push(line);
   }
-  // Collapse the blank line an inner removed block may leave behind.
+  // 收敛内层被删块可能留下的空行。
   let text = out.join('\n').replace(/\n{3,}/g, '\n\n');
   if (!text.endsWith('\n')) text += '\n';
   return { patch: text, removed };
 }
-
-module.exports = { configLinesFor, normalizeRowConfigIndent, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds };

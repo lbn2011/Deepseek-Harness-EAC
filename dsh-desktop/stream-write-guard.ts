@@ -4,14 +4,14 @@
 // 把 Writable 的异步错误（含 write-after-end）圈进 onError 回调，写侧不再
 // 需要为每次 write 包 try/catch。
 
-interface GuardedStream {
+export interface GuardedStream {
   write(chunk: unknown): boolean;
   end(): boolean;
   readonly closing: boolean;
   readonly ended: boolean;
 }
 
-interface GuardOpts {
+export interface GuardOpts {
   onError?(err: unknown): void;
 }
 
@@ -24,7 +24,7 @@ interface MinimalWritable {
   writable?: boolean;
 }
 
-function createStreamWriteGuard(stream: MinimalWritable, opts: GuardOpts = {}): GuardedStream {
+export function createStreamWriteGuard(stream: MinimalWritable, opts: GuardOpts = {}): GuardedStream {
   if (!stream || typeof stream.write !== 'function' || typeof stream.end !== 'function') {
     throw new TypeError('createStreamWriteGuard: writable stream is required');
   }
@@ -75,5 +75,3 @@ function createStreamWriteGuard(stream: MinimalWritable, opts: GuardOpts = {}): 
     get ended(): boolean { return ended || !!stream.writableEnded || !!stream.destroyed; },
   };
 }
-
-export = { createStreamWriteGuard };

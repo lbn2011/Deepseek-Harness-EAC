@@ -1,79 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const desktop = join(repo, 'dsh-desktop');
+const stage = readFileSync(join(repo, 'tauri-shell', 'stage-resources.mjs'), 'utf8');
+const config = JSON.parse(readFileSync(join(repo, 'tauri-shell', 'tauri.conf.json'), 'utf8')) as {
+  bundle: { resources: Record<string, string> };
+};
 
-// 防呆（v3.0.0 事故）：main.js 顶层 require 的本地模块（如 ./bundle-integrity）
-// 若未列进 electron-builder.yml 的 files，打包产物启动即抛
-// "Cannot find module" 并闪退。本测试静态比对两边清单。
-//
-// 约定：main.js 顶层的 require('./xxx') / require('./xxx.js') 都必须是
-// files 清单里的一个条目（相对根目录的文件名）。运行时动态 require 的
-// （dshBin 的 @deepseek-ai/dsh 走 node_modules，由默认规则打包）不受影响。
+test('Tauri 资源映射包含 sidecar 与 dsh-desktop 完整运行树', () => {
+  assert.equal(config.bundle.resources['staged-resources/sidecar/'], 'sidecar/');
+  assert.equal(config.bundle.resources['staged-resources/dsh-desktop/'], 'dsh-desktop/');
+});
 
-const mainSrc = fs.readFileSync(join(root, 'main.js'), 'utf8');
-
-function localRequiresOf(src) {
-  const out = new Set();
-  const re = /require\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    let name = m[1];
-    if (!name.endsWith('.js')) name = name + '.js';
-    out.add(name);
+test('sidecar 五个入口与快照面板都进入装配清单', () => {
+  for (const file of ['server.js', 'bridge.js', 'ping.js', 'rescue-integration.js', 'ipc-surface.js']) {
+    assert.match(stage, new RegExp(`['"]${file.replace('.', '\\.')}['"]`));
   }
-  return out;
-}
+  assert.match(stage, /SIDECAR_UI_FILES\s*=\s*\['snapshot-ui\.js'\]/);
+});
 
-function bundledFilesPatterns() {
-  const yml = fs.readFileSync(join(root, 'electron-builder.yml'), 'utf8');
-  const lines = yml.split(/\r?\n/);
-  const patterns = [];
-  let inFiles = false;
-  for (const line of lines) {
-    if (/^files:/.test(line)) { inFiles = true; continue; }
-    if (inFiles) {
-      const m = line.match(/^\s{2}-\s+(?:'([^']+)'|"([^"]+)"|(\S+))\s*$/);
-      if (m) patterns.push(m[1] || m[2] || m[3]);
-      else if (line.trim() && !line.trim().startsWith('#')) inFiles = false;
-    }
+test('统一模块运行闭包中的关键文件都进入装配清单', () => {
+  for (const file of ['host-bootstrap.js', 'host-ctx.js', 'server.js', 'ipc/index.js', 'snapshot/manager.js', 'recovery-center/register-sidecar.js']) {
+    assert.match(stage, new RegExp(`['"]${file.replace('/', '\\/').replace('.', '\\.')}['"]`), `装配清单缺少 ${file}`);
   }
-  return patterns;
-}
-
-test('main.js 顶层 require 的每个本地模块都在 electron-builder files 清单中', () => {
-  const requires = localRequiresOf(mainSrc);
-  assert.ok(requires.size >= 10, '应至少识别出 10 个本地依赖，实际: ' + [...requires].join(', '));
-  const patterns = bundledFilesPatterns();
-  assert.ok(patterns.length > 0, 'files 清单解析失败');
-  const missing = [...requires].filter((name) => !patterns.includes(name));
-  assert.deepEqual(missing, [],
-    '以下模块被 main.js require 但未打包，会导致启动即闪退: ' + missing.join(', '));
 });
 
-test('main.js 通过 __dirname 直接引用的运行时脚本也必须打包', () => {
-  // spawn/读取型引用：path.join(__dirname, 'xxx.js') 形式
-  const refs = new Set();
-  const re = /__dirname\s*,\s*['"]([^'"]+\.js)['"]/g;
-  let m;
-  while ((m = re.exec(mainSrc)) !== null) refs.add(m[1]);
-  const patterns = bundledFilesPatterns();
-  const missing = [...refs].filter((name) => !patterns.includes(name));
-  assert.deepEqual(missing, [],
-    '以下脚本被运行时引用但未打包: ' + missing.join(', '));
+test('原生模块、共享协议与 package lock 都进入装配链', () => {
+  for (const fragment of ['supervisor/index.node', 'snapshot/index.node', 'shared/protocol.js', 'package-lock.json']) {
+    assert.match(stage, new RegExp(fragment.replace('/', '\\/').replace('.', '\\.')));
+  }
 });
 
-test('preload.js 必须在打包清单中（窗口上下文桥）', () => {
-  const patterns = bundledFilesPatterns();
-  assert.ok(patterns.includes('preload.js'));
-});
-
-test('Tauri 资源装配不再携带 WSL 后端', () => {
-  const stageScript = fs.readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
-  assert.doesNotMatch(stageScript, /wsl-backend/i);
-  assert.ok(!fs.existsSync(join(root, 'wsl-backend.ts')));
+test('Electron 入口与配置已从运行树退役', () => {
+  for (const rel of ['main.ts', 'main.js', 'preload.ts', 'preload.js', 'electron-builder.yml']) {
+    assert.equal(existsSync(join(desktop, rel)), false, `${rel} 不应存在`);
+  }
 });

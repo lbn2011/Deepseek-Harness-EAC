@@ -20,8 +20,8 @@
  * 变而 size 可能不变，旧戳记会误判未变化而跳过重拷）。
  */
 
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /** 随插件/皮肤包一起拷贝的许可与出处文件（存在才拷贝）。 */
 export const EXTRA_PACKAGE_FILES = [

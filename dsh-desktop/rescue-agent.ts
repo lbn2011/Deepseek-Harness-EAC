@@ -25,10 +25,10 @@
 //   · 网络调用带连接+响应双超时与响应大小上限，失败降级为手动模式；
 //   · 一切修复动作由 main.js 注入执行器完成，本模块只做校验与分发。
 
-import fs = require('node:fs');
-import path = require('node:path');
-import http = require('node:http');
-import https = require('node:https');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as http from 'node:http';
+import * as https from 'node:https';
 const yaml = require('js-yaml') as { load(text: string): unknown };
 const { removePluginFromPatch } = require('./scripts/plugin-manager-patch') as { removePluginFromPatch(patch: string, id: string): string };
 
@@ -732,7 +732,7 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
     .catch((err) => ({ ok: false, error: String(((err as Error) && (err as Error).message) || err) }));
 }
 
-export = {
+export {
   DEFAULT_OPTS,
   ACTION_SPEC,
   readTail,

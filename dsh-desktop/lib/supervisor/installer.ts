@@ -14,10 +14,10 @@
  *   5. 失败回滚：恢复 .rollback 里的旧版，staging 清理，registry 不留脏档。
  */
 
-import fs = require('node:fs');
-import path = require('node:path');
-import os = require('node:os');
-import crypto = require('node:crypto');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as crypto from 'node:crypto';
 import type { ExtensionRecord } from '../../shared/protocol.js';
 import { state } from '../state.js';
 import { log } from '../log.js';

@@ -64,13 +64,17 @@ function makeCtx(cli, userDataDir) {
 }
 
 // 子进程被杀后可能仍短暂持有 cwd 句柄（Windows），清理时重试几次。
-function rmRetry(dir) {
+// 必须用 await setTimeout（而非 Atomics.wait）等待：applyUpdate 的
+// logs/update.log 写流 fd 是异步关闭的，Atomics.wait 阻塞主线程会让它
+// 永远关不上 —— 首轮 rmSync 已把日志标成 delete-pending，后续 lstat
+// 全部 EPERM，重试窗口再长也救不回来；让出事件循环一轮 fd 即关。
+async function rmRetry(dir) {
   // Windows may keep a recently-killed child cwd handle briefly (especially
   // on hosted runners with antivirus scanning); allow cleanup to outlive the
   // process termination instead of turning a successful assertion into EBUSY.
   for (let i = 0; i < 20; i++) {
     try { fs.rmSync(dir, { recursive: true, force: true }); return; } catch {}
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    await new Promise((r) => setTimeout(r, 500));
   }
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -88,7 +92,7 @@ test('applyUpdate: first registry fails -> automatically switches to mirror and 
   assert.ok(events.some((e) => e.stage === 'done'), '成功阶段应上报');
   assert.ok(logs.some((l) => l.includes('自动切换镜像源')), '日志应记录切换');
   assert.ok(fs.existsSync(path.join(userDataDir, 'agent', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')));
-  rmRetry(userDataDir);
+  await rmRetry(userDataDir);
 });
 
 test('applyUpdate: whole chain exhausted -> throws with all sources listed, staging cleaned', async () => {
@@ -100,7 +104,7 @@ test('applyUpdate: whole chain exhausted -> throws with all sources listed, stag
     (err) => /已尝试镜像源：/.test(err.message) && err.message.includes('npmjs') && err.message.includes('npmmirror')
   );
   assert.ok(!fs.existsSync(path.join(userDataDir, 'agent-staging')), '失败后 staging 应清理');
-  rmRetry(userDataDir);
+  await rmRetry(userDataDir);
 });
 
 test('npm stall: no output within stallMs kills the process and reports stall', async () => {
@@ -111,7 +115,7 @@ test('npm stall: no output within stallMs kills the process and reports stall', 
     updater.applyUpdate(ctx, '0.1.0-rc.9', { onProgress: () => {}, stallMs: 700 }),
     /下载停滞/
   );
-  rmRetry(userDataDir);
+  await rmRetry(userDataDir);
 });
 
 test('checkLatest: falls back to mirror when the default source fails', async () => {
@@ -121,5 +125,5 @@ test('checkLatest: falls back to mirror when the default source fails', async ()
   const v = await updater.checkLatest(ctx);
   assert.equal(v, '0.1.0-rc.9');
   assert.ok(logs.some((l) => l.includes('版本检查成功（镜像源')));
-  rmRetry(userDataDir);
+  await rmRetry(userDataDir);
 });

@@ -6,7 +6,7 @@
 // 通道分流：
 //   win.*                → Rust 壳层在 WS 中继处本地拦截（窗口控制/拖拽/开发工具）
 //   其余（chrome.init / service.restart / balance.* / plugins.* / rescue.* …）
-//                        → 转发 sidecar（lib/desktop 模块族，P3 渐进收编）
+//                        → 转发 sidecar（统一 lib 模块族）
 //   通知帧（无 id）      → win.maximized / dsh.balance / boot.web-ready 推送
 //
 // 页面侧 chrome：36px 玻璃栏（主窗）/ 24px 细条（浮窗），mousedown →
@@ -18,6 +18,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
 
 (function () {
   var WS_URL = (window as any).__DSH_BRIDGE_WS__ || 'ws://127.0.0.1:19873/ws';
+  var SESSION_TOKEN = (window as any).__DSH_BRIDGE_SESSION__ || '';
   var BAR_ID = '__dsh_desktop_chrome__';
   var BAR_HEIGHT = 36;
   var FLOAT_BAR_ID = '__dsh_desktop_floatbar__';
@@ -31,11 +32,22 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   var readyHooks: ((info: any) => void)[] = [];
   var queue: BridgeFrame[] = [];
 
-  function rawSend(obj: BridgeFrame): void {
-    try { if (ws) ws.send(JSON.stringify(obj)); } catch (e) { /* 断线由重连兜底 */ }
+  function openSnapshotPanel(api: any): void {
+    var existing = document.getElementById('__dsh_snapshot_panel__');
+    if (existing) {
+      (existing as HTMLElement).hidden = false;
+      return;
+    }
+    var loader = (window as any).__dshOpenSnapshotPanel;
+    if (typeof loader === 'function') loader(api);
   }
 
-  // fire-and-forget（Electron ipcRenderer.send 语义）：不等回复，断了就丢。
+  function rawSend(obj: BridgeFrame): void {
+    var params = Object.assign({}, (obj.params && typeof obj.params === 'object') ? obj.params : {}, { __sessionToken: SESSION_TOKEN });
+    try { if (ws) ws.send(JSON.stringify(Object.assign({}, obj, { params: params }))); } catch (e) { /* 断线由重连兜底 */ }
+  }
+
+  // fire-and-forget（legacy-shell ipcRenderer.send 语义）：不等回复，断了就丢。
   function send(method: string, params?: unknown): void {
     if (wsReady) rawSend({ jsonrpc: '2.0', method: method, params: params || {} });
   }
@@ -61,7 +73,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     ws.onopen = function () {
       wsReady = true;
       while (queue.length) rawSend(queue.shift() as BridgeFrame);
-      call('chrome.init', {}).then(function (info) {
+      call('chrome:init', {}).then(function (info) {
         try { readyHooks.forEach(function (h) { h(info); }); } catch (e) { /* 页面回调异常不断桥 */ }
       }).catch(function () { /* chrome.init 不可用不致命 */ });
     };
@@ -116,10 +128,10 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
         return call('menu.action', p);
       },
     },
-    getInfo: function () { return call('chrome.init', {}); },
-    refreshBalance: function () { return call('balance.refresh', {}); },
+    getInfo: function () { return call('chrome:init', {}); },
+    refreshBalance: function () { return call('dsh:balance-refresh', {}); },
     // 插件市场：请求原地重启 dsh web 服务（安装/卸载插件后生效）。
-    restartService: function () { return call('service.restart', { intent: 'restart-service' }); },
+    restartService: function () { return call('chrome:restart-service', { intent: 'restart-service' }); },
     // 会话浮窗（多窗口）：主窗请求把某个会话弹出到独立窗口；浮窗关闭自身。
     floatWindow: {
       open: function (sessionId: string) { return call('float.open', { sessionId: sessionId }); },
@@ -131,27 +143,27 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     },
     // 插件保护中心：快照 / 回滚 / 体检 / 修复 / 事故报告。
     guard: {
-      action: function (action: string, value?: unknown) { return call('guard.action', { action: action, value: value }); },
+      action: function (action: string, value?: unknown) { return call('guard:action', { action: action, value: value }); },
     },
     // 内置插件选择向导。
     pluginWizard: {
-      open: function () { return call('wizard.open', {}); },
+      open: function () { return call('onboard:open', {}); },
     },
     // 插件管理：列出/启停/移除恢复（写 profile cordis.patch.yml）。
     pluginManager: {
-      list: function () { return call('plugins.list', {}); },
-      setEnabled: function (id: string, enabled: boolean) { return call('plugins.set-enabled', { id: id, enabled: enabled }); },
-      setRemoved: function (id: string, removed: boolean) { return call('plugins.set-removed', { id: id, removed: removed }); },
+      list: function () { return call('dsh:plugin-list', {}); },
+      setEnabled: function (id: string, enabled: boolean) { return call('dsh:plugin-set-enabled', { id: id, enabled: enabled }); },
+      setRemoved: function (id: string, removed: boolean) { return call('dsh:plugin-set-removed', { id: id, removed: removed }); },
     },
     // 插件更新：清单 / 手动更新单个 / 自动更新开关。
     pluginUpdates: {
-      list: function (force?: boolean) { return call('plugins.updates', { force: force === true }); },
-      update: function (id: string) { return call('plugins.update', { id: id }); },
-      setAutoUpdate: function (enabled: boolean) { return call('plugins.auto-update', { enabled: enabled }); },
+      list: function (force?: boolean) { return call('dsh:plugin-updates', { force: force === true }); },
+      update: function (id: string) { return call('dsh:plugin-update', { id: id }); },
+      setAutoUpdate: function (enabled: boolean) { return call('dsh:plugin-auto-update', { enabled: enabled }); },
     },
     // 图片粘贴：剪贴板图片存临时目录，返回 { ok, path, size }。
     imagePaste: {
-      save: function (payload: Record<string, unknown>) { return call('image-paste.save', payload || {}); },
+      save: function (payload: Record<string, unknown>) { return call('dsh:image-paste-save', payload || {}); },
     },
     // 拖入文件（zip/二进制等）：dataUrl → 临时目录 → 真实路径，供 agent 按路径读取。
     fileDrop: {
@@ -159,26 +171,35 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     },
     // Token 价格自定义：读取/保存/恢复（¥/百万 token）。
     balancePrices: {
-      get: function (model: string) { return call('balance.prices-get', { model: model }); },
-      set: function (model: string, prices: unknown) { return call('balance.prices-set', { model: model, prices: prices }); },
-      reset: function (model: string) { return call('balance.prices-reset', { model: model }); },
+      get: function (model: string) { return call('dsh:balance-prices-get', { model: model }); },
+      set: function (model: string, prices: unknown) { return call('dsh:balance-prices-set', { model: model, prices: prices }); },
+      reset: function (model: string) { return call('dsh:balance-prices-reset', { model: model }); },
     },
-    balanceModels: {
-      list: function () { return call('balance.models', {}); },
-    },
-    revertFiles: function (changes: unknown) { return call('files.revert', { changes: changes }); },
-    openPath: function (path: string) { return call('files.open', { path: path }); },
-    openExternal: function (url: string) { return call('shell.open-external', { url: url }); },
-    copyText: function (text: string) { return call('clipboard.write-text', { text: text }); },
+    revertFiles: function (changes: unknown) { return call('dsh:file-revert', { changes: changes }); },
+    openPath: function (path: string) { return call('dsh:file-open', { path: path }); },
+    openExternal: function (url: string) { return call('dsh:open-external', { url: url }); },
+    copyText: function (text: string) { return call('dsh:copy-text', { text: text }); },
     // 浏览器环境无 File 磁盘路径：返回空串，插件降级为可读提示（与浏览器打开
     // WebUI 时的行为一致）。
     getPathForFile: function (): string { return ''; },
     // 恢复页面动作与状态读取。
     recovery: {
-      getState: function () { return call('recovery.state', {}); },
-      reload: function () { return call('recovery.reload', {}); },
-      restart: function () { return call('recovery.restart', {}); },
-      exportLogs: function () { return call('recovery.export-logs', {}); },
+      getState: function () { return call('chrome:recovery-state', {}); },
+      reload: function () { return call('chrome:recovery-reload', {}); },
+      restart: function () { return call('chrome:recovery-restart', {}); },
+      exportLogs: function () { return call('chrome:export-logs', {}); },
+    },
+    snapshot: {
+      overview: function () { return call('snapshot:overview', {}); },
+      create: function (message?: string) { return call('snapshot:create', { message: message }); },
+      detail: function (id: string) { return call('snapshot:detail', { id: id }); },
+      restore: function (id: string, safety?: boolean) { return call('snapshot:restore', { id: id, safety: safety }); },
+      createBranch: function (name: string, fromId?: string) { return call('snapshot:branch-create', { name: name, fromId: fromId }); },
+      deleteBranch: function (name: string) { return call('snapshot:branch-delete', { name: name }); },
+      setCurrentBranch: function (name: string) { return call('snapshot:branch-set-current', { name: name }); },
+      saveConfig: function (config: Record<string, unknown>) { return call('snapshot:config-save', { config: config }); },
+      deleteSnapshot: function (id: string) { return call('snapshot:delete', { id: id }); },
+      gc: function () { return call('snapshot:gc', {}); },
     },
     // 崩溃救援：状态/确认清单/AI 诊断/逐项批准/安全模式/重试/自动修复。
     rescue: {
@@ -255,7 +276,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   function esc(s: any): string { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string; }); }
 
   // WebView2 无 -webkit-app-region:drag —— mousedown 转发壳层 start_dragging。
-  // 双击标题 = 最大化/还原（Electron 拖拽区默认行为对齐）。
+  // 双击标题 = 最大化/还原（legacy-shell 拖拽区默认行为对齐）。
   function armDrag(el: Element): void {
     var lastClick = 0;
     el.addEventListener('mousedown', function (e) {
@@ -302,6 +323,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     </div>\
     <div class="dch-sep"></div>\
     <button class="dch-item" data-act="restart-service"><span>重启 Web 服务</span><span class="dch-kbd">不关闭应用</span></button>\
+    <button class="dch-item" data-act="open-snapshot-manager"><span>快照管理器</span><span class="dch-kbd">.dsh 备份</span></button>\
     <button class="dch-item" data-act="reload"><span>重新加载</span><span class="dch-kbd">Ctrl+R</span></button>\
     <button class="dch-item" data-act="devtools"><span>开发者工具</span><span class="dch-kbd">F12</span></button>\
     <button class="dch-item" data-act="fullscreen"><span>全屏</span><span class="dch-kbd">F11</span></button>\
@@ -324,6 +346,10 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
           return;
         }
         closeMenu();
+        if (act === 'open-snapshot-manager') {
+          openSnapshotPanel(dshDesktop);
+          return;
+        }
         dshDesktop.menu.action(act).catch(function () { /* 同上 */ });
       });
     });

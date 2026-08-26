@@ -7,14 +7,16 @@
 // 错误发生在运行时），因此本脚本额外做模式扫描。
 // 检查范围与 electron-builder.yml 的 files 清单保持一致（入口 js）。
 
-import fs = require('node:fs');
-import path = require('node:path');
-import cp = require('node:child_process');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 const entryFiles = [
   'main.js',
   'preload.js',
+  // VNext Phase 2：Host 进程入口（tsc 编译产物，predist 在 build 之后运行）。
+  'host-bootstrap.js',
   'updater.js',
   'client-updater.js',
   'balance.js',
@@ -22,14 +24,13 @@ const entryFiles = [
   'session-encoding-heal.js',
   'renderer-recovery.js',
   'watchdog.js',
-  'shortcut-maintenance.js',
+  // lib/shortcut-maintenance.ts 的编译产物（electron-builder files 清单在列）。
+  'lib/shortcut-maintenance.js',
   'stable-port.js',
-  'stream-write-guard.js',
   'koffi-preflight.js',
   'profile-module-heal.js',
   'patch-row-heal.js',
   'plugin-guard.js',
-  'rescue-agent.js',
   'preset-sync.js',
 ];
 
@@ -51,7 +52,7 @@ function detachedHits(text: string): DetachedHit[] {
   DETACHED_KEYWORD.lastIndex = 0;
   while ((match = DETACHED_KEYWORD.exec(text)) !== null) {
     const upTo = text.slice(0, match.index);
-    hits.push({ keyword: match[1]!, line: upTo.split(/\r?\n/).length });
+    hits.push({ keyword: match[1] ?? '', line: upTo.split(/\r?\n/).length });
   }
   return hits;
 }
@@ -65,7 +66,7 @@ if (missing.length) {
 let failed = 0;
 for (const file of entryFiles) {
   const filePath = path.join(root, file);
-  const result = cp.spawnSync(process.execPath, ['--check', filePath], {
+  const result = spawnSync(process.execPath, ['--check', filePath], {
     encoding: 'utf8',
     windowsHide: true,
   });

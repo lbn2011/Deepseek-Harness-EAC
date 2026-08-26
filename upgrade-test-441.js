@@ -1,17 +1,19 @@
 'use strict';
-// 4.4.1（Electron）→ 5.1.0（Tauri）升级路径端到端验证 v2：
+// 4.4.1（Electron）→ 6.0.0（Tauri）升级路径端到端验证：
 //   1) 静默装 4.4.1 → 键指向 Programs、树就位
 //   2) 启动 4.4.1 模拟「升级时应用还在运行」（用户实测：宠物 webm 被占用）
-//   3) 静默装 5.1.0 → PREINSTALL 杀进程树 + 接管旧卸载器（继承原安装目录）
+//   3) 静默装 6.0.0 → PREINSTALL 杀进程树 + 接管旧卸载器（继承原安装目录）
 //   4) 断言（期望目录 = 4.4.1 键里的 InstallLocation，动态读取）：
 //      键→新 Tauri 卸载器、新布局落地、内核 rc.2、旧 resources\app 清除、快捷方式在
 // 全部注册表/目录检查走 PowerShell（reg.exe 经 Git Bash 转义不可靠）。
+// 用法：node upgrade-test-441.js <4.4.1-setup> <6.0.0-setup> [期望版本，默认 6.0.0]
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
 
 const OLD_SETUP = process.argv[2];
 const NEW_SETUP = process.argv[3];
-if (!OLD_SETUP || !NEW_SETUP) { console.error('用法: node upgrade-test-441.js <4.4.1-setup> <5.1.0-setup>'); process.exit(2); }
+const EXPECT_NEW = process.argv[4] || '6.0.0';
+if (!OLD_SETUP || !NEW_SETUP) { console.error('用法: node upgrade-test-441.js <4.4.1-setup> <6.0.0-setup> [期望版本]'); process.exit(2); }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -56,7 +58,7 @@ async function main() {
   const running = ps(`(Get-Process 'Deepseek Harness EAC' -ErrorAction SilentlyContinue | Measure-Object).Count`);
   console.log('  (旧应用进程数: ' + running + ')');
 
-  console.log('[upgrade-test] 阶段 3：静默安装 5.1.0（杀进程 + 接管）');
+  console.log('[upgrade-test] 阶段 3：静默安装 ' + EXPECT_NEW + '（杀进程 + 接管）');
   const t0 = Date.now();
   const c3 = await run(NEW_SETUP);
   console.log('  (新安装器退出码 ' + c3 + '，耗时 ' + Math.round((Date.now() - t0) / 1000) + 's)');
@@ -66,7 +68,7 @@ async function main() {
   const EXP = OLD_LOC;
   const un = unquote(keyProp('UninstallString'));
   const ver = keyProp('DisplayVersion');
-  check('卸载键已接管为 5.1.0', ver === '5.1.0', 'v=' + ver);
+  check('卸载键已接管为 ' + EXPECT_NEW, ver === EXPECT_NEW, 'v=' + ver);
   check('卸载器指向新目录', un.includes(EXP) && /uninstall/i.test(un), un.slice(0, 90));
   check('新壳 exe 就位', fs.existsSync(path.join(EXP, 'dsh-eac-shell.exe')));
   check('新 sidecar 布局就位', fs.existsSync(path.join(EXP, 'sidecar', 'server.js')));

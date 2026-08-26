@@ -17,9 +17,9 @@
  * 硬边界是进程围栏 + Core Profile 零写入（诚实边界见 spec §11）。
  */
 
-import fs = require('node:fs');
-import path = require('node:path');
-import cp = require('node:child_process');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { exec } from 'node:child_process';
 import type {
   ContextContribution,
   HostLogParams,
@@ -223,7 +223,7 @@ export function buildSdk(params: HostInitParams, io: SdkIo): { ctx: Record<strin
     ctx.shell = {
       exec: (cmd: string, timeoutMs = 30_000): Promise<{ code: number | null; stdout: string; stderr: string }> =>
         new Promise((resolve) => {
-          cp.exec(String(cmd), { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
+          exec(String(cmd), { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
             const code = typeof err?.code === 'number' ? err.code : 0;
             resolve({ code, stdout: String(stdout), stderr: String(stderr) });
           });

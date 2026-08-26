@@ -21,10 +21,9 @@
  * dsh_<module>_native.{dll,so,dylib}，Node require 约定 .node 扩展名），
  * 并做存在性断言（predist 校验复用 `copy`） */
 'use strict';
-import cp = require('node:child_process');
-import fs = require('node:fs');
-import path = require('node:path');
-import os = require('node:os');
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const MODULES = ['supervisor', 'snapshot'] as const;
 type Module = (typeof MODULES)[number];
@@ -47,34 +46,27 @@ const artifactBase = `dsh_${moduleName}_native`;
 
 /** 取工具链 sysroot（失败抛出 —— 没有 rustc 时无法构建）。 */
 function sysroot(): string {
-  const r = cp.spawnSync('rustc', ['--print', 'sysroot'], { encoding: 'utf8' });
+  const r = spawnSync('rustc', ['--print', 'sysroot'], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error('rustc 不可用（请先安装 Rust 工具链）');
   return r.stdout.trim();
 }
 
-/** 准备 lld-link.exe（从工具链 rust-lld 复制；argv0 决定 MSVC link 兼容模式）。
- * 目标放到 %TEMP%/dsh-lld-link/（无空格路径）——RUSTFLAGS 按空白切分，
- * 项目路径含空格（DeepSeek Harness\dsh max）时引号方案也不可靠，绕开最稳。 */
+/** 准备 lld-link.exe（从工具链 rust-lld 复制；argv0 决定 MSVC link 兼容模式）。 */
 function prepareLldLink(): string {
   const src = path.join(sysroot(), 'lib', 'rustlib', 'x86_64-pc-windows-msvc', 'bin', 'rust-lld.exe');
   if (!fs.existsSync(src)) throw new Error(`rust-lld 不存在: ${src}`);
-  const dstDir = path.join(os.tmpdir(), 'dsh-lld-link');
-  fs.mkdirSync(dstDir, { recursive: true });
-  const dst = path.join(dstDir, 'lld-link.exe');
+  fs.mkdirSync(targetDir, { recursive: true });
+  const dst = path.join(targetDir, 'lld-link.exe');
   fs.copyFileSync(src, dst);
   return dst;
 }
 
-/** Windows 以 lld-link 为链接器；其他平台使用当前 Rust 工具链默认链接器。 */
+/** 以 lld-link 为链接器调用 cargo（返回 cargo 退出码）。 */
 function runCargo(sub: string, rest: string[]): number {
-  const env = { ...process.env };
-  if (process.platform === 'win32') {
-    const linker = prepareLldLink();
-    // 路径含空格（如 "DeepSeek Harness\dsh max"）时必须以引号包住 linker 值，
-    // 否则 rustc 的 RUSTFLAGS 按空白拆分会把路径截断成多个输入文件。
-    env.RUSTFLAGS = `-C linker=${linker}`;
-  }
-  const r = cp.spawnSync('cargo', [sub, '--manifest-path', manifest, ...rest], {
+  const env = process.platform === 'win32'
+    ? { ...process.env, RUSTFLAGS: `-C linker=${prepareLldLink()}` }
+    : process.env;
+  const r = spawnSync('cargo', [sub, '--manifest-path', manifest, ...rest], {
     stdio: 'inherit',
     env,
     cwd: crateRoot,

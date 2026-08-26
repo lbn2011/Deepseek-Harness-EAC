@@ -26,11 +26,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // ADR 0002：COMPANION_PLUGINS / RETIRED_BUILTIN_PLUGINS 已迁至 L2 模块。
-const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
+const main = readFileSync(join(root, 'lib', 'plugin-registry-data.ts'), 'utf8');
 
 function companionSlice() {
   const start = main.indexOf('const COMPANION_PLUGINS');
-  assert.ok(start >= 0, 'COMPANION_PLUGINS must exist in lib/desktop/companion-sync.ts');
+  assert.ok(start >= 0, 'COMPANION_PLUGINS must exist in lib/plugin-registry-data.ts');
   const end = main.indexOf('];', start);
   assert.ok(end > start, 'COMPANION_PLUGINS array must be closed');
   return main.slice(start, end);
@@ -73,7 +73,7 @@ test('regression: settings-groups stays registered, retired marketplace never re
   assert.doesNotMatch(slice, /dsh-tdai-memory|tdai-memory/, '已退役的 tdai-memory 不得重新进入内置插件清单');
   assert.match(slice, /id:\s*'settings-groups'/, '侧边栏普通/高级分组（Bug #58）—— V4.6.1 起负责常规页页内折叠');
   const retiredStart = main.indexOf('const RETIRED_BUILTIN_PLUGINS');
-  assert.ok(retiredStart >= 0, 'RETIRED_BUILTIN_PLUGINS must exist in lib/desktop/companion-sync.ts');
+  assert.ok(retiredStart >= 0, 'RETIRED_BUILTIN_PLUGINS must exist in lib/plugin-registry-data.ts');
   const retiredSlice = main.slice(retiredStart, main.indexOf('];', retiredStart));
   assert.match(retiredSlice, /id:\s*'plugin-marketplace'/,
     '旧插件市场必须保持退役 —— 复活会与 dsh-unified-market 重复注册 /api/dsh-market（dsh web 退出码 1）');

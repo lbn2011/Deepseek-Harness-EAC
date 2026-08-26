@@ -9,9 +9,9 @@
  * 中心在任何损坏状态下必须可用）。
  */
 
-import fs = require('node:fs');
-import path = require('node:path');
-import os = require('node:os');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import type { ExtensionRegistry, ExtensionRecord, ExtensionRuntimeState } from '../../shared/protocol.js';
 import { state } from '../state.js';
 import { log } from '../log.js';

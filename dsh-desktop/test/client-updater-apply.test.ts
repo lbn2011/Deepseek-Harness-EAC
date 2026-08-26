@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,10 +24,10 @@ const POWERSHELL = path.join(
   'System32',
   'WindowsPowerShell',
   'v1.0',
-  'powershell.exe'
+  'powershell.exe',
 );
 
-function waitForExit(child, timeoutMs = 15000) {
+function waitForExit(child: ChildProcess, timeoutMs = 15000): Promise<number | null> {
   return new Promise((resolve, reject) => {
     if (child.exitCode !== null) {
       resolve(child.exitCode);
@@ -48,7 +48,7 @@ function waitForExit(child, timeoutMs = 15000) {
   });
 }
 
-async function waitForFile(file, timeoutMs = 5000) {
+async function waitForFile(file: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(file)) return;
@@ -57,7 +57,7 @@ async function waitForFile(file, timeoutMs = 5000) {
   throw new Error(`file was not created within ${timeoutMs}ms: ${file}`);
 }
 
-function startSleepingPowerShell(seconds = 60) {
+function startSleepingPowerShell(seconds = 60): ChildProcess {
   return spawn(POWERSHELL, [
     '-NoLogo',
     '-NoProfile',
@@ -70,66 +70,70 @@ function startSleepingPowerShell(seconds = 60) {
   });
 }
 
-function runInstalledHelper({
-  script,
-  actionScript,
-  setup,
-  oldExe,
-  appPid,
-  log,
-  userDataDir,
-  dshHome,
-  installDir,
-  profileDir,
-  currentVersion = '4.4.0',
-  newVersion = '4.4.1',
-  waitTimeoutSeconds = 20,
-  env = process.env,
-}) {
-  return spawn(POWERSHELL, buildInstalledPowerShellArgs(script, {
-    actionScript,
-    newExe: setup,
-    oldExe,
-    userDataDir,
-    dshHome,
-    installDir,
-    profileDir,
-    currentVersion,
-    newVersion,
-    appPid,
-    logPath: log,
-    waitTimeoutSeconds,
+interface RunHelperParams {
+  script: string;
+  actionScript: string;
+  setup: string;
+  oldExe: string;
+  appPid: number;
+  log: string;
+  userDataDir: string;
+  dshHome: string;
+  installDir: string;
+  profileDir: string;
+  currentVersion?: string;
+  newVersion?: string;
+  waitTimeoutSeconds?: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+function runInstalledHelper(p: RunHelperParams): ChildProcess {
+  return spawn(POWERSHELL, buildInstalledPowerShellArgs(p.script, {
+    actionScript: p.actionScript,
+    newExe: p.setup,
+    oldExe: p.oldExe,
+    userDataDir: p.userDataDir,
+    dshHome: p.dshHome,
+    installDir: p.installDir,
+    profileDir: p.profileDir,
+    currentVersion: p.currentVersion ?? '4.4.0',
+    newVersion: p.newVersion ?? '4.4.1',
+    appPid: p.appPid,
+    logPath: p.log,
+    waitTimeoutSeconds: p.waitTimeoutSeconds ?? 20,
   }), {
     stdio: 'ignore',
     windowsHide: true,
-    env,
+    env: p.env,
   });
 }
 
-function writeInstalledScripts(dir, {
-  setup,
-  oldExe,
-  userDataDir = dir,
-  dshHome = dir,
-  installDir = dir,
-  profileDir = dir,
-  currentVersion = '4.4.0',
-  newVersion = '4.4.1',
-  nodeExe = '',
-} = {}) {
+interface WriteScriptsParams {
+  setup: string;
+  oldExe: string;
+  userDataDir?: string;
+  dshHome?: string;
+  installDir?: string;
+  profileDir?: string;
+  currentVersion?: string;
+  newVersion?: string;
+  nodeExe?: string;
+}
+
+function writeInstalledScripts(dir: string, p: WriteScriptsParams): { script: string; actionScript: string } {
   const actionScript = path.join(dir, 'apply-update.cmd');
   const script = path.join(dir, 'apply-update.ps1');
   fs.writeFileSync(actionScript, buildApplyScript({
-    newExe: setup,
-    oldExe,
+    newExe: p.setup,
+    oldExe: p.oldExe,
     portable: false,
-    userDataDir,
-    dshHome,
-    installDir,
-    profileDir,
-    currentVersion,
-    newVersion,
-    nodeExe,
+    userDataDir: p.userDataDir ?? dir,
+    dshHome: p.dshHome ?? dir,
+    installDir: p.installDir ?? dir,
+    profileDir: p.profileDir ?? dir,
+    currentVersion: p.currentVersion ?? '4.4.0',
+    newVersion: p.newVersion ?? '4.4.1',
+    nodeExe: p.nodeExe ?? '',
   }).join('\r\n') + '\r\n');
   fs.writeFileSync(script, buildInstalledApplyScript().join('\r\n') + '\r\n', 'ascii');
   return { script, actionScript };
@@ -264,10 +268,10 @@ test('installed PowerShell arguments reject an invalid app PID', () => {
     newVersion: '4.4.1',
     logPath: 'C:\\updates\\apply-update.log',
   };
-  for (const appPid of [undefined, null, 0, -1, 1.5, '42']) {
+  for (const appPid of [undefined, null, 0, -1, 1.5, '42'] as unknown[]) {
     assert.throws(
-      () => buildInstalledPowerShellArgs('C:\\updates\\apply-update.ps1', { ...input, appPid }),
-      /PID/
+      () => buildInstalledPowerShellArgs('C:\\updates\\apply-update.ps1', { ...input, appPid: appPid as never }),
+      /PID/,
     );
   }
 });
@@ -357,7 +361,7 @@ const FULL_BACKUP_OPTS = {
 test('backup branch must not invoke bare `node` from PATH (inlines %NODEEXE% or skips backup)', () => {
   const joined = buildApplyScript(FULL_BACKUP_OPTS).join('\n');
   // batch 直接引用只到 %9 —— `%~10` 被解析为 `%~1` 后跟字面量 `0`
-  // （v4.4 实测 NODEEXE 接成了 "<第1参>0" → 文件不存在 → 备份被静默
+  //（v4.4 实测 NODEEXE 接成了 "<第1参>0" → 文件不存在 → 备份被静默
   // 跳过）。（shift 接第 10 参曾被判定「脚本静默死亡」，2x2 矩阵探针
   // shift × 结尾 CRLF 共 32 轮已证伪 —— 纯属当年探针自身缺陷；但内联
   // 设计无需第 10 参，本断言锁定内联方案不变。）nodeExe 由脚本生成器
@@ -382,7 +386,7 @@ test('backup branch must not invoke bare `node` from PATH (inlines %NODEEXE% or 
 // 安装 + .backup-ts marker + 成功清理，全程 PATH 剥掉 node。
 test('backup flow e2e: 4-dir backup + manifest + /S setup + marker, node stripped from PATH', { skip: process.platform !== 'win32' }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-apply-bk-'));
-  let appProc;
+  let appProc: ChildProcess | undefined;
   try {
     const ud = path.join(dir, 'userdata');
     const dsh = path.join(dir, 'dshhome');
@@ -404,7 +408,7 @@ test('backup flow e2e: 4-dir backup + manifest + /S setup + marker, node strippe
     const fakeAppExe = path.join(dir, fakeExeName);
     fs.copyFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ping.exe'), fakeAppExe);
     appProc = spawn(fakeAppExe, ['-n', '60', '127.0.0.1'], { stdio: 'ignore', windowsHide: true });
-    const appExited = new Promise((r) => appProc.once('exit', r));
+    const appExited = new Promise((r) => appProc!.once('exit', r));
     const marker = path.join(dir, 'setup-ran.ok');
     const fakeSetup = path.join(dir, 'fake-setup.cmd');
     fs.writeFileSync(fakeSetup, `@echo off\r\necho ran> "${marker}"\r\nexit /b 0\r\n`);
@@ -429,7 +433,7 @@ test('backup flow e2e: 4-dir backup + manifest + /S setup + marker, node strippe
       actionScript,
       setup: fakeSetup,
       oldExe: fakeAppExe,
-      appPid: appProc.pid,
+      appPid: appProc.pid as number,
       log: path.join(dir, 'apply-update.log'),
       userDataDir: ud,
       dshHome: dsh,
@@ -457,8 +461,10 @@ test('backup flow e2e: 4-dir backup + manifest + /S setup + marker, node strippe
     const backupsRoot = path.join(ud, 'backups');
     const withManifest = fs.readdirSync(backupsRoot).filter((e) => fs.existsSync(path.join(backupsRoot, e, 'manifest.json')));
     assert.equal(withManifest.length, 1, 'exactly one backup dir with manifest.json, got ' + withManifest.join(','));
-    const ts = withManifest[0];
-    const manifest = JSON.parse(fs.readFileSync(path.join(backupsRoot, ts, 'manifest.json'), 'utf8'));
+    const ts = withManifest[0] as string;
+    const manifest = JSON.parse(fs.readFileSync(path.join(backupsRoot, ts, 'manifest.json'), 'utf8')) as {
+      oldVersion: string; newVersion: string; installLocation: { actual: string };
+    };
     assert.equal(manifest.oldVersion, '4.3.0');
     assert.equal(manifest.newVersion, '4.4.0');
     assert.equal(String(manifest.installLocation.actual).toLowerCase(), inst.toLowerCase());
@@ -490,7 +496,7 @@ test('backup flow e2e: 4-dir backup + manifest + /S setup + marker, node strippe
 // 被删掉的安装文件被恢复 → 不写 marker → 拉起旧版 → 脚本退出 1。
 test('backup flow e2e: setup failure rolls back the 4 directories from the backup', { skip: process.platform !== 'win32' }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-apply-rb-'));
-  let appProc;
+  let appProc: ChildProcess | undefined;
   try {
     const ud = path.join(dir, 'userdata');
     const dsh = path.join(dir, 'dshhome');
@@ -505,7 +511,7 @@ test('backup flow e2e: setup failure rolls back the 4 directories from the backu
     const fakeAppExe = path.join(dir, fakeExeName);
     fs.copyFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ping.exe'), fakeAppExe);
     appProc = spawn(fakeAppExe, ['-n', '60', '127.0.0.1'], { stdio: 'ignore', windowsHide: true });
-    const appExited = new Promise((r) => appProc.once('exit', r));
+    const appExited = new Promise((r) => appProc!.once('exit', r));
 
     // 伪装 Setup：写标记 → 删安装目录文件（模拟半途失败）→ 退出 1
     const marker = path.join(dir, 'setup-ran.ok');
@@ -526,7 +532,7 @@ test('backup flow e2e: setup failure rolls back the 4 directories from the backu
       actionScript,
       setup: fakeSetup,
       oldExe: fakeAppExe,
-      appPid: appProc.pid,
+      appPid: appProc.pid as number,
       log: path.join(dir, 'apply-update.log'),
       userDataDir: ud,
       dshHome: dsh,
@@ -570,7 +576,7 @@ test('installed helper waits for graceful app exit before running the update act
   skip: process.platform !== 'win32',
 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-installed-graceful-'));
-  let appProc;
+  let appProc: ChildProcess | undefined;
   try {
     const runningMarker = path.join(dir, 'app-running.flag');
     const setupMarker = path.join(dir, 'setup-result.txt');
@@ -608,7 +614,7 @@ test('installed helper waits for graceful app exit before running the update act
       actionScript,
       setup,
       oldExe,
-      appPid: appProc.pid,
+      appPid: appProc.pid as number,
       log,
       userDataDir: dir,
       dshHome: dir,
@@ -638,8 +644,8 @@ test('installed helper timeout stops only the requested PID', {
   skip: process.platform !== 'win32',
 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-installed-timeout-'));
-  let target;
-  let sibling;
+  let target: ChildProcess | undefined;
+  let sibling: ChildProcess | undefined;
   try {
     target = startSleepingPowerShell();
     sibling = startSleepingPowerShell();
@@ -657,7 +663,7 @@ test('installed helper timeout stops only the requested PID', {
       actionScript,
       setup,
       oldExe,
-      appPid: target.pid,
+      appPid: target.pid as number,
       log,
       userDataDir: dir,
       dshHome: dir,
@@ -669,7 +675,7 @@ test('installed helper timeout stops only the requested PID', {
     await waitForExit(target, 3000);
 
     assert.ok(fs.existsSync(setupMarker), 'Setup must run after the target exits');
-    assert.equal(sibling.exitCode, null, 'sibling process must not be killed');
+    assert.equal((sibling as ChildProcess).exitCode, null, 'sibling process must not be killed');
     assert.match(fs.readFileSync(log, 'utf8'), /stopping exact PID/);
   } finally {
     for (const child of [target, sibling]) {
@@ -702,7 +708,7 @@ test('installed helper keeps artifacts and relaunches the old app when Setup fai
       '-Command',
       'exit 0',
     ], { stdio: 'ignore', windowsHide: true });
-    const exitedPid = alreadyExited.pid;
+    const exitedPid = alreadyExited.pid as number;
     await waitForExit(alreadyExited);
 
     const helper = runInstalledHelper({

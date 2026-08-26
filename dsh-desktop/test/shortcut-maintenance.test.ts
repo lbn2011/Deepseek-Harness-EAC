@@ -1,29 +1,33 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// 桌面快捷方式去重判定（lib/shortcut-maintenance.ts）的回归测试。
+// 移植自 main #91 的 test/shortcut-maintenance.test.mjs。
+//
+// 核心契约：桌面快捷方式单一创建者（安装版=NSIS，便携版=运行时）；
+// 双创建者交叉产生的重复只删「软件原样生成」的；用户改名/换图标/加
+// 参数的一律保留；shortcutPolicy=never 时既不创建也不清理。
 
-const require = createRequire(import.meta.url);
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const {
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import {
   STANDARD_SHORTCUT_NAME,
   RUNTIME_SHORTCUT_DESCRIPTION,
   desktopShortcutDirs,
   classifyManagedShortcut,
   planDesktopShortcutMaintenance,
-} = require(join(root, 'shortcut-maintenance.js'));
+  type ShortcutEntry,
+} from '../lib/shortcut-maintenance.js';
 
 const target = String.raw`C:\Program Files\Deepseek Harness EAC\Deepseek Harness EAC.exe`;
 const previousTarget = String.raw`E:\Deepseek Harness EAC\Deepseek Harness EAC.exe`;
 const managedIcon = String.raw`C:\Users\Test\AppData\Roaming\Deepseek Harness EAC\icon.ico`;
-const installerDescription = 'DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI';
+const installerDescription =
+  'DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI';
 
-function entry(scope, filePath, link) {
+function entry(scope: 'user' | 'public', filePath: string, link: Record<string, unknown>): ShortcutEntry {
   return { scope, filePath, link: { args: '', ...link } };
 }
 
-function runtime(scope = 'user', overrides = {}) {
+function runtime(scope: 'user' | 'public' = 'user', overrides: Record<string, unknown> = {}): ShortcutEntry {
   const desktop = scope === 'public' ? String.raw`C:\Users\Public\Desktop` : String.raw`C:\Users\Test\Desktop`;
   return entry(scope, join(desktop, STANDARD_SHORTCUT_NAME), {
     target,
@@ -33,7 +37,7 @@ function runtime(scope = 'user', overrides = {}) {
   });
 }
 
-function installer(scope = 'public', overrides = {}) {
+function installer(scope: 'user' | 'public' = 'public', overrides: Record<string, unknown> = {}): ShortcutEntry {
   const desktop = scope === 'public' ? String.raw`C:\Users\Public\Desktop` : String.raw`C:\Users\Test\Desktop`;
   return entry(scope, join(desktop, STANDARD_SHORTCUT_NAME), {
     target,

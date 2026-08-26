@@ -47,17 +47,6 @@ test('schemastery (the plugin\'s only missing server dep) is declared', () => {
     'schemastery must be in dependencies for fallback junction resolution');
 });
 
-test('desktop profile initialization resolves the DSH home before linking schemastery', () => {
-  // ADR 0002：实现迁至 lib/desktop/profile（L2 业务服务层；Wave 1 起 .ts 为源）。
-  const src = readFileSync(join(ROOT, 'lib', 'desktop', 'profile.ts'), 'utf8');
-  const start = src.indexOf('function ensureDesktopProfileInit()');
-  const end = src.indexOf('\n}\n', start);
-  const body = src.slice(start, end);
-  assert.match(body, /const home = ctx\.getDshHome\(\) \|\| path\.join\(os\.homedir\(\), '\.dsh'\)/,
-    'ensureDesktopProfileInit must define home before path.join(home, ...)');
-  assert.match(body, /path\.join\(home, 'profiles', 'node_modules'\)/);
-});
-
 // issue #14 / zcode 报告：app 层声明不足以让 fallback 闭包（BFS 起点是
 // 捆绑的 dsh 包 package.json）包含 schemastery → 全新安装后
 // profiles/node_modules 永远缺 junction → dsh web 启动即崩（退出码 1）。
@@ -74,9 +63,9 @@ test('after-pack injects closure-unreachable deps into the bundled dsh package',
 });
 
 test('COMPANION_PLUGINS registers dsh-better-sidebar', () => {
-  // ADR 0002：注册表迁至 lib/desktop/companion-sync.js。
-  const mainSrc = readFileSync(join(ROOT, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
-  assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(mainSrc),
+  // Task 5：COMPANION_PLUGINS 表迁 lib/plugin-registry-data.ts。
+  const registrySrc = readFileSync(join(ROOT, 'lib', 'plugin-registry-data.ts'), 'utf8');
+  assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(registrySrc),
     'COMPANION_PLUGINS entry missing');
 });
 

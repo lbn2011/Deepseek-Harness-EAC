@@ -144,33 +144,6 @@ test('Manager：外部 kill -9 → crash/retrying → 自动重启恢复 running
   }
 });
 
-test('Manager：残留 running 态（上次会话异常退出）→ 崩溃对账 → 自动重启恢复', async () => {
-  const home = freshHome();
-  assert.equal(
-    installPlugin(home, 'stale', `
-      module.exports.activate = function (ctx) {
-        ctx.registerTool('getpid', () => process.pid);
-      };
-    `).ok,
-    true,
-  );
-  // 模拟上次会话异常终止：sidecar 被杀时插件正处 running，注册表留下 stale 标记。
-  const reg = registry.readRegistry();
-  reg.plugins['stale'].state = 'running';
-  registry.writeRegistry(reg);
-  const mgr = fastManager();
-  try {
-    assert.equal(entryOf('stale').state, 'running', '前置：残留 running');
-    assert.equal(await mgr.startPlugin('stale'), true, '残留 running 应被对账并拉起');
-    assert.equal(entryOf('stale').state, 'running', '对账后重启恢复 running');
-    const pid = await mgr.invoke('stale', 'getpid');
-    assert.ok(typeof pid === 'number' && pid > 0, 'Host 实际存活');
-  } finally {
-    await mgr.shutdownAll();
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
 test('Manager：连续启动失败 3 次 → 自动隔离并停手', async () => {
   const home = freshHome();
   assert.equal(
@@ -381,5 +354,32 @@ test('Supervisor 崩溃无孤儿：Job 句柄随进程关闭整树回收（win32
         /* 已退出 */
       }
     }
+  }
+});
+
+test('Manager：残留 running 态（上次会话异常退出）→ 崩溃对账 → 自动重启恢复', async () => {
+  const home = freshHome();
+  assert.equal(
+    installPlugin(home, 'stale', `
+      module.exports.activate = function (ctx) {
+        ctx.registerTool('getpid', () => process.pid);
+      };
+    `).ok,
+    true,
+  );
+  // 模拟上次会话异常终止：sidecar 被杀时插件正处 running，注册表留下 stale 标记。
+  const reg = registry.readRegistry();
+  reg.plugins['stale'].state = 'running';
+  registry.writeRegistry(reg);
+  const mgr = fastManager();
+  try {
+    assert.equal(entryOf('stale').state, 'running', '前置：残留 running');
+    assert.equal(await mgr.startPlugin('stale'), true, '残留 running 应被对账并拉起');
+    assert.equal(entryOf('stale').state, 'running', '对账后重启恢复 running');
+    const pid = await mgr.invoke('stale', 'getpid');
+    assert.ok(typeof pid === 'number' && pid > 0, 'Host 实际存活');
+  } finally {
+    await mgr.shutdownAll();
+    rmSync(home, { recursive: true, force: true });
   }
 });

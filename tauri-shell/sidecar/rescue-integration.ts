@@ -3,9 +3,9 @@
 // 追加挂载到 server.ts（保持主文件可读性；编译进同一 server.js 产物）。
 // 用法：在 server.ts 尾部（readline 循环之前）require 本文件并传入上下文。
 
-import path = require('node:path');
-import fs = require('node:fs');
-import cp = require('node:child_process');
+import * as path from 'node:path';
+import * as fs from 'node:fs';
+import * as cp from 'node:child_process';
 
 export interface RescueHost {
   dshHome: string;

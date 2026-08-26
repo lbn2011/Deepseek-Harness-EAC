@@ -79,6 +79,24 @@ test('same-size in-place source edit changes stamp (h hash) and forces re-copy',
   }
 });
 
+test('missing dest file with matching source stamp forces re-copy (d268fe9)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-pcopy-'));
+  try {
+    const src = makeSource(root, 'AAA');
+    const profile = join(root, 'profile');
+    mkdirSync(profile, { recursive: true });
+    copyPluginPackage(profile, src, 'eac-test-pkg');
+    // 外部移除目标文件（中断拷贝/杀软清理）：源戳记一致，但完整性判定
+    // 失败 → 必须重拷恢复缺失文件（companion-copy-integrity 契约）。
+    const destFile = join(profile, 'node_modules', 'eac-test-pkg', 'lib', 'a.js');
+    rmSync(destFile);
+    copyPluginPackage(profile, src, 'eac-test-pkg');
+    assert.ok(existsSync(destFile), 'missing dest file must be restored despite stamp match');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('stamp cache: same source returns identical stamp across calls', () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-pcopy-'));
   try {

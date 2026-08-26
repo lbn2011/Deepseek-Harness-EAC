@@ -1,9 +1,10 @@
 'use strict';
 
 // L2 Node sidecar PoC —— stdio JSON-RPC（行分隔帧）。
-// 未来承载 lib/desktop/* 全部业务模块；本文件演示协议与 L3 内核定位。
+// sidecar 承载统一 lib 业务模块；本文件演示协议与 L3 内核定位。
 
-import path = require('node:path');
+import * as path from 'node:path';
+import * as readline from 'node:readline';
 
 interface RpcMessage {
   jsonrpc: string;
@@ -16,7 +17,7 @@ function respond(msg: RpcMessage): void {
   process.stdout.write(JSON.stringify(msg) + '\n');
 }
 
-const rl = require('node:readline').createInterface({ input: process.stdin });
+const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line: string) => {
   const text = line.trim();
   if (!text) return;

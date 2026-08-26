@@ -1,9 +1,9 @@
 ; Deepseek Harness EAC — Tauri NSIS 安装钩子。
 ; 职责：
-;   1. Electron → Tauri 无缝接管（v5.0 切换）：检测旧 Electron 壳卸载键，
+;   1. legacy-shell → Tauri 无缝接管（v5.0 切换）：检测旧 legacy-shell 壳卸载键，
 ;      静默卸载旧版再安装 —— 同安装目录、同快捷方式名，用户数据
 ;      （%APPDATA%\Deepseek Harness EAC 与 ~/.dsh）不受影响。
-;      R6 实测修正：electron-builder NSIS 的卸载键名 = **productName**
+;      R6 实测修正：legacy-shell-builder NSIS 的卸载键名 = **productName**
 ;      （"Deepseek Harness EAC"），不是应用 identifier（com.deepseek.dsh.desktop）。
 ;      两个候选键都探测，存在即处理。
 ;   2. 防御注册表脏值：

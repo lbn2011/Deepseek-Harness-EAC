@@ -2,5 +2,7 @@
 sidecar/server.js
 sidecar/bridge.js
 sidecar/rescue-integration.js
+sidecar/ipc-surface.js
 staged-resources/
 sidecar/ping.js
+sidecar/snapshot-ui.js

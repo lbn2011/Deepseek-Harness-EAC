@@ -6,8 +6,9 @@ import { dirname, join } from 'node:path';
 import { removePluginFromPatch } from '../scripts/plugin-manager-patch.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-// ADR 0002：RETIRED_BUILTIN_PLUGINS 与 syncCompanionPlugins 已迁至 L2 模块。
-const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
+// ADR 0002：RETIRED_BUILTIN_PLUGINS 与 syncCompanionPlugins 已迁至统一 L2 模块。
+const registry = readFileSync(join(root, 'lib', 'plugin-registry-data.ts'), 'utf8');
+const plugins = readFileSync(join(root, 'lib', 'plugins.ts'), 'utf8');
 
 const retiredMarkets = [
   { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },
@@ -16,17 +17,17 @@ const retiredMarkets = [
 ];
 
 test('all historical built-in markets are retired before unified-market sync', () => {
-  const listStart = main.indexOf('const RETIRED_BUILTIN_PLUGINS = [');
-  const listEnd = main.indexOf('\n];', listStart);
-  const list = main.slice(listStart, listEnd);
+  const listStart = registry.indexOf('const RETIRED_BUILTIN_PLUGINS');
+  const listEnd = registry.indexOf('\n];', listStart);
+  const list = registry.slice(listStart, listEnd);
 
   for (const { id, name } of retiredMarkets) {
     assert.ok(list.includes(`{ id: '${id}', name: '${name}' }`),
       `${id} must be removed during profile migration`);
   }
 
-  const cleanupCall = main.indexOf('retireRemovedBuiltinPlugins(desktopProfileDir());');
-  const syncLoop = main.indexOf('for (const p of COMPANION_PLUGINS)', cleanupCall);
+  const cleanupCall = plugins.indexOf('retireRemovedBuiltinPlugins(desktopProfileDir());');
+  const syncLoop = plugins.indexOf('for (const p of COMPANION_PLUGINS)', cleanupCall);
   assert.ok(cleanupCall !== -1 && syncLoop > cleanupCall,
     'retired markets must be removed before companion plugins are synced');
 });

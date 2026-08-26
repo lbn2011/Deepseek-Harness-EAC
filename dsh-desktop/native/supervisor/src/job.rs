@@ -30,6 +30,50 @@ use std::sync::Mutex;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 
+#[cfg(target_os = "linux")]
+mod unix {
+    use core::ffi::c_int;
+
+    pub const PR_SET_PDEATHSIG: c_int = 1;
+    pub const SIGKILL: c_int = 9;
+    pub const SIGTERM: c_int = 15;
+
+    extern "C" {
+        pub fn prctl(option: c_int, arg2: usize, arg3: usize, arg4: usize, arg5: usize) -> c_int;
+        pub fn getpid() -> c_int;
+        pub fn getppid() -> c_int;
+        pub fn getpgrp() -> c_int;
+        pub fn setpgid(pid: c_int, pgid: c_int) -> c_int;
+        pub fn killpg(pgrp: c_int, sig: c_int) -> c_int;
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[napi]
+pub fn arm_parent_death_signal() -> Result<()> {
+    let parent = unsafe { unix::getppid() };
+    let pid = unsafe { unix::getpid() };
+    if unsafe { unix::getpgrp() } != pid && unsafe { unix::setpgid(0, 0) } != 0 {
+        return Err(Error::new(Status::GenericFailure, "setpgid 失败"));
+    }
+    if unsafe { unix::prctl(unix::PR_SET_PDEATHSIG, unix::SIGTERM as usize, 0, 0, 0) } != 0 {
+        return Err(Error::new(Status::GenericFailure, "PR_SET_PDEATHSIG 失败"));
+    }
+    if unsafe { unix::getppid() } != parent {
+        unsafe { unix::killpg(0, unix::SIGKILL) };
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+#[napi]
+pub fn arm_parent_death_signal() -> Result<()> {
+    Err(Error::new(
+        Status::GenericFailure,
+        "父进程死亡信号仅支持 Linux",
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Win32 FFI（不引 winapi/windows crate，缩小依赖与攻击面）
 // ---------------------------------------------------------------------------
@@ -206,7 +250,10 @@ fn with_job<T>(job_id: u32, f: impl FnOnce(usize) -> T) -> Result<T> {
     let map = guard.as_mut().ok_or_else(|| jobs_locked("with_job"))?;
     match map.get(&job_id) {
         Some(entry) => Ok(f(entry.handle)),
-        None => Err(Error::new(Status::GenericFailure, format!("job 不存在: {job_id}"))),
+        None => Err(Error::new(
+            Status::GenericFailure,
+            format!("job 不存在: {job_id}"),
+        )),
     }
 }
 
@@ -342,7 +389,9 @@ pub fn create_job(opts: Option<JobOptions>) -> Result<u32> {
         }
     }
 
-    put_job(JobEntry { handle: job as usize })
+    put_job(JobEntry {
+        handle: job as usize,
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -400,7 +449,8 @@ pub fn assign_to_job(_job_id: u32, _pid: u32) -> Result<()> {
 #[napi]
 pub fn terminate_job(job_id: u32, exit_code: Option<u32>) -> Result<()> {
     let entry = take_job(job_id)?;
-    let rc = unsafe { win::TerminateJobObject(entry.handle as win::HANDLE, exit_code.unwrap_or(1)) };
+    let rc =
+        unsafe { win::TerminateJobObject(entry.handle as win::HANDLE, exit_code.unwrap_or(1)) };
     put_back_job(job_id, entry)?;
     if rc == 0 {
         return Err(Error::new(
@@ -516,7 +566,10 @@ mod tests {
         assert!(assign_to_job(job, 4).is_err(), "不可绑定系统进程");
         assert!(!job_alive(job).expect("alive"), "空 Job 不得有活跃进程");
         close_job(job).expect("close");
-        assert!(err_contains(close_job(job), "不存在"), "重复 close 必须报错（句柄已回收）");
+        assert!(
+            err_contains(close_job(job), "不存在"),
+            "重复 close 必须报错（句柄已回收）"
+        );
     }
 
     #[test]
@@ -535,7 +588,10 @@ mod tests {
             .expect("spawn ping");
         let pid = child.id();
         assign_to_job(job, pid).expect("assign");
-        assert!(job_alive(job).expect("alive"), "绑定后 Job 内必须有活跃进程");
+        assert!(
+            job_alive(job).expect("alive"),
+            "绑定后 Job 内必须有活跃进程"
+        );
         terminate_job(job, Some(7)).expect("terminate");
         for _ in 0..50 {
             if !job_alive(job).expect("alive") {
@@ -543,7 +599,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(!job_alive(job).expect("alive"), "terminate 后 Job 内不得有存活进程");
+        assert!(
+            !job_alive(job).expect("alive"),
+            "terminate 后 Job 内不得有存活进程"
+        );
         let _ = child.wait(); // 回收僵尸（TerminateJobObject 已杀掉它）
         close_job(job).expect("close");
     }

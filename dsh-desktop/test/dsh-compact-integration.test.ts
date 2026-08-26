@@ -7,14 +7,14 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import * as CompactAgent from '../assets/plugins/dsh-compact/lib/agent.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-// ADR 0002：注册表迁至 lib/desktop/companion-sync.js，启停文案迁至 plugin-ops.js。
-const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8')
-const pluginOpsSrc = readFileSync(join(root, 'lib', 'desktop', 'plugin-ops.ts'), 'utf8')
+// ADR 0002：注册表迁至统一 L2 模块，启停文案迁至 plugin-manager-core.ts。
+const main = readFileSync(join(root, 'lib', 'plugin-registry-data.ts'), 'utf8')
+const pluginOpsSrc = readFileSync(join(root, 'lib', 'plugin-manager-core.ts'), 'utf8')
 
 test('dsh-compact integration: new plugin is bundled and old browser trigger is retired', () => {
   assert.match(main, /\{ id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' \}/)
   assert.doesNotMatch(
-    main.slice(main.indexOf('const COMPANION_PLUGINS'), main.indexOf('const PLUGIN_UPDATE_SOURCES')),
+    main.slice(main.indexOf('const COMPANION_PLUGINS'), main.indexOf('const RETIRED_BUILTIN_PLUGINS')),
     /\{ id: 'auto-compact'/,
   )
   assert.match(main, /\{ id: 'auto-compact', name: 'dsh-auto-compact' \}/)
@@ -29,7 +29,7 @@ test('dsh-compact integration: new plugin is bundled and old browser trigger is 
 test('dsh-compact integration: package is core because managed presets depend on it', async () => {
   const onboarding = await import('../scripts/onboarding.js')
   assert.equal(onboarding.default.CORE_PLUGIN_IDS.has('compact'), true)
-  assert.match(pluginOpsSrc, /核心插件不可停用/)
+  assert.match(pluginOpsSrc, /核心插件不可(?:停用|移除)/)
 })
 
 test('dsh-compact integration: every managed preset exposes one composite compact entry', async () => {
@@ -100,8 +100,8 @@ test('dsh-compact integration: composite agent starts engine, command and pruner
   await Promise.all(providers.reverse().map((provider) => provider.dispose()))
 })
 
-test('dsh-compact integration: migration helper is included in packaged app', () => {
-  const builder = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
-  assert.match(builder, /- compact-preset-migrate\.js/)
-  assert.match(builder, /- assets\/\*\*\/\*/)
+test('dsh-compact integration: migration helper is included in Tauri resources', () => {
+  const stage = readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8')
+  assert.match(stage, /'compact-preset-migrate\.js'/)
+  assert.match(stage, /cpSync\(path\.join\(dd, 'assets'\)/)
 })

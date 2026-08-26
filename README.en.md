@@ -9,11 +9,12 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
-<p>A ready-to-use <strong>Windows desktop client</strong> built around the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
+<p>A ready-to-use <strong>Windows and Linux desktop client</strong> built around the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
 On top of the official foundation, EAC embraces community creations — skins, plugins, tools, memories, and more — all installable with one click.</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC UI preview"></a></p>
@@ -62,23 +63,36 @@ On top of the official foundation, EAC embraces community creations — skins, p
 ### Requirements
 
 - Windows 10/11 (x64)
+- Linux x86_64 (Arch / Ubuntu / Debian / Fedora, or any distribution that supports AppImage)
 - No pre-installed Node.js or other runtime required
 
 ### Windows
 
-> The current full edition is v4.4.1 (Electron shell); the Lite edition below uses a Tauri (Rust) shell — smaller and faster to start. Download installers directly from Releases.
+> The current full edition is v6.0.0 (Tauri shell, Windows + Linux). Download installers directly from Releases.
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | Installs to the system and creates shortcuts | ~246 MB |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | No installation required; a single file you can place anywhere | ~212 MB |
-| [Lite setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.5-lite/Deepseek.Harness.EAC.v4Lite_4.5.0_x64-setup.exe) | **Lite edition** (lighter Tauri shell, independent of the full builds above and safe to run side by side): main executable `Deepseek Harness EAC v4Lite.exe`, data directory `~/.dsh-v4lite`, SHA256 checksum file included with the release | ~73 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-Setup-6.0.0-x64.exe) | Windows installs to the system and creates shortcuts | see Release |
+| [Portable zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-6.0.0-portable.zip) | Windows no installation required; extract anywhere and run | see Release |
 
 See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases) for more versions.
 
 > 💡 **Upgrading**: just download and run the newest installer above over your existing install.
 > Plugins, skins, sessions and settings are preserved: data lives in
 > `%APPDATA%\Deepseek Harness EAC\` and `~/.dsh`, untouched by the upgrade.
+
+### Linux (x64)
+
+Linux support ships with v6.0.0, targeting **Ubuntu / Debian** plus a universal AppImage (updates are managed by the system package manager, not the in-app updater):
+
+| Distribution | Package | Install command |
+| --- | --- | --- |
+| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-6.0.0-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-6.0.0-amd64.deb` |
+| Universal | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-6.0.0-x86_64.AppImage) | Run directly after `chmod +x` |
+
+> - Uninstall with `apt remove dsh-desktop`.
+> - Like the Windows build, Linux packages include Node.js and the npm CLI. No pre-installed Node.js is needed, and data continues to use `~/.dsh` (`DSH_HOME`).
+> - Linux updates are managed by the system package manager rather than the in-app updater. To build it yourself, use the source code in the repository's root `linux` branch.
 
 ### First Run
 
@@ -148,14 +162,14 @@ See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/rel
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ Community Group 3 QR code" width="320" />
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ Community Group 2 QR code" width="320" />
     </td>
     <td align="center" width="50%">
       <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC WeChat community group QR code" width="320" />
     </td>
   </tr>
   <tr>
-    <td align="center"><strong>QQ Community Group 3</strong><br />Group number: 1083832019</td>
+    <td align="center"><strong>QQ Community Group 2</strong><br />Group number: 1021296425</td>
     <td align="center"><strong>WeChat Community Group</strong></td>
   </tr>
 </table>

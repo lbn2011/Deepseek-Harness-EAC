@@ -19,7 +19,7 @@
  */
 
 import { RpcPeer } from './lib/extension-host/rpc.js';
-import fs = require('node:fs');
+import * as fs from 'node:fs';
 import {
   buildSdk, dispatchEvent, collectContext,
   validateArgs, type SdkRuntime,
@@ -28,6 +28,22 @@ import type {
   CollectContextParams, HostInitParams, HostInvokeParams, HostLogParams,
   PingParams, SdkEventParams,
 } from './shared/protocol.js';
+
+if (process.platform !== 'win32') {
+  process.once('SIGTERM', () => {
+    try {
+      process.kill(-process.pid, 'SIGKILL');
+    } catch {
+      process.exit(0);
+    }
+  });
+  try {
+    const native = require('./native/supervisor/index.node') as { armParentDeathSignal?: () => void };
+    native.armParentDeathSignal?.();
+  } catch {
+    process.stdin.once('close', () => process.exit(0));
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 插件装载状态（init 后填充）

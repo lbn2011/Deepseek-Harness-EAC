@@ -1,15 +1,15 @@
-'use strict';
+/**
+ * stable-port.ts — Web 服务稳定端口选择（集成自上游 dsh_desktop）（Task 7.1
+ * 自 stable-port.js 迁 TS）。
+ *
+ * dsh web 的部分 Web UI 偏好（如左侧会话分组方式）存在 localStorage，而
+ * localStorage 按 origin 隔离；每次 `--port 0` 随机分配都会换 origin，导致
+ * 用户偏好丢失。启动时优先复用 settings 里持久化的端口，不可用再挑一个
+ * 固定的空闲端口；同时避开 Chromium 受限端口（ERR_UNSAFE_PORT），否则窗口
+ * 加载 http://127.0.0.1:<restricted>/ 会直接白屏。
+ */
 
-// Stable web-port selection (integrated from upstream dsh_desktop;
-// Wave 3 自 stable-port.js 类型化迁出，行为零变更).
-//
-// dsh web 的部分 Web UI 偏好（如左侧会话分组方式）存在 localStorage，而
-// localStorage 按 origin 隔离；每次 `--port 0` 随机分配都会换 origin，导致
-// 用户偏好丢失。启动时优先复用 settings 里持久化的端口，不可用再挑一个
-// 固定的空闲端口；同时避开 Chromium 受限端口（ERR_UNSAFE_PORT），否则窗口
-// 加载 http://127.0.0.1:<restricted>/ 会直接白屏。
-
-import net = require('node:net');
+import * as net from 'node:net';
 
 // Chromium bad-port list（截取常见的系统/保留端口，完整列表见
 // https://chromium.googlesource.com/chromium/src/+/main/net/base/port_util.cc）
@@ -22,12 +22,7 @@ export const CHROMIUM_RESTRICTED_PORTS = new Set<number>([
   6697, 10080,
 ]);
 
-interface StablePortCtx {
-  loadSettings(c: unknown): { webPort?: number } & Record<string, unknown>;
-  saveSettings(c: unknown, s: unknown): void;
-}
-
-// url 命中受限端口时返回该端口号，否则返回 0。
+/** url 命中受限端口时返回该端口号，否则返回 0。 */
 export function restrictedPortOf(url: string): number {
   try {
     const u = new URL(url);
@@ -38,20 +33,27 @@ export function restrictedPortOf(url: string): number {
   }
 }
 
-// 选一个尽量稳定的 127.0.0.1 端口并通过 ctx.saveSettings 持久化。
-//
-// ctx 形如主进程的 updCtx()：
-//   ctx.loadSettings(ctx) / ctx.saveSettings(ctx, settings) —— 端口持久化
-// opts.maxFreeRetries —— 空闲随机端口命中受限列表时的重试次数（默认 5），
-//   重试耗尽仍受限则保存 0（回落到 dsh web 的随机分配，由启动方的
-//   watchServerProc 受限端口重试兜底）。
-export function chooseStableWebPort(
-  ctx: StablePortCtx,
-  opts: { maxFreeRetries?: number } = {},
-): Promise<number> {
+/** settings 读写桥（主进程的 updCtx()/stablePortCtx() 形状）。 */
+export interface StablePortCtx {
+  loadSettings(ctx: StablePortCtx): Record<string, unknown>;
+  saveSettings(ctx: StablePortCtx, settings: Record<string, unknown>): void;
+}
+
+/** chooseStableWebPort 选项。 */
+export interface StablePortOpts {
+  /** 空闲随机端口命中受限列表时的重试次数（默认 5）。 */
+  maxFreeRetries?: number;
+}
+
+/**
+ * 选一个尽量稳定的 127.0.0.1 端口并通过 ctx.saveSettings 持久化。
+ * 重试耗尽仍受限则保存 0（回落到 dsh web 的随机分配，由启动方的
+ * watchServerProc 受限端口重试兜底）。
+ */
+export function chooseStableWebPort(ctx: StablePortCtx, opts: StablePortOpts = {}): Promise<number> {
   const maxFreeRetries = opts.maxFreeRetries != null ? opts.maxFreeRetries : 5;
   return new Promise((resolve) => {
-    const settings = ctx.loadSettings(ctx);
+    const settings = ctx.loadSettings(ctx) as { webPort?: number | string };
     const preferred = Number(settings.webPort) || 0;
     const save = (port: number): void => {
       settings.webPort = port;
@@ -67,15 +69,15 @@ export function chooseStableWebPort(
       probe.once('error', () => finish(false));
       probe.listen(port, '127.0.0.1', () => finish(true));
     };
-    const pickFree = (retriesLeft: number = maxFreeRetries): void => {
+    const pickFree = (retriesLeft = maxFreeRetries): void => {
       const probe = net.createServer();
       probe.once('error', () => {
         if (retriesLeft > 0) pickFree(retriesLeft - 1);
         else save(0);
       });
       probe.listen(0, '127.0.0.1', () => {
-        const addr = probe.address();
-        const port = addr && typeof addr === 'object' ? addr.port : 0;
+        const addr = probe.address() as { port: number } | null;
+        const port = addr?.port ?? 0;
         probe.close(() => {
           if (CHROMIUM_RESTRICTED_PORTS.has(port) && retriesLeft > 0) pickFree(retriesLeft - 1);
           else save(port);

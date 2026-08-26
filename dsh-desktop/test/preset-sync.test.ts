@@ -216,6 +216,13 @@ test('上游新增 preset 完整：目录自包含或引用的 ../_preset 共享
   }
 });
 
+test('Tauri 资源装配包含 preset-sync.js（否则新模块不进安装包）', () => {
+  const stage = readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
+  assert.match(stage, /'preset-sync\.js'/);
+});
+
+// 上游 main 增量（absorb #219 资产面）：内置 preset 仅携带 Windows shell 配置，
+// 不含跨平台 shell 分支；并验证 cordis 可解析。
 test('内置 preset 仅携带 Windows shell 配置', () => {
   const assetsRoot = join(root, 'assets', 'agent-presets');
   const expectedShells: Record<string, string[]> = {
@@ -237,9 +244,4 @@ test('内置 preset 仅携带 Windows shell 配置', () => {
     }
     assert.doesNotThrow(() => parsePreset(text), name + ' 无法解析');
   }
-});
-
-test('electron-builder files 包含 preset-sync.js（否则新模块不进安装包）', () => {
-  const yml = readFileSync(join(root, 'electron-builder.yml'), 'utf8');
-  assert.match(yml, /- preset-sync\.js/);
 });

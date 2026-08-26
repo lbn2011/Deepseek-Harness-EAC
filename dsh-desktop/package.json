@@ -1,30 +1,26 @@
 {
   "name": "dsh-desktop",
   "productName": "Deepseek Harness EAC",
-  "version": "5.1.0",
-  "description": "DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI",
-  "main": "main.js",
+  "version": "6.0.0",
+  "description": "DeepSeek Harness (dsh) 开箱即用的跨平台桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI",
   "author": "DSH Desktop",
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "electron .",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/test-runner.js",
+    "pretest": "npm run build",
+    "test:native": "node scripts/build-native.js test && node scripts/build-native.js test snapshot",
+    "build:native": "node scripts/build-native.js build && node scripts/build-native.js build snapshot",
+    "clippy:native": "node scripts/build-native.js clippy && node scripts/build-native.js clippy snapshot",
+    "tauri:stage": "node ../tauri-shell/stage-resources.mjs",
+    "tauri:build": "npm run tauri:stage && npx -y @tauri-apps/cli@2 build --project-dir ../tauri-shell",
     "fetch-node": "npm run build && node scripts/fetch-node.js",
-    "predist": "npm run build && node scripts/check-syntax.js && node scripts/build-native.js copy && node scripts/build-native.js copy snapshot",
-    "prepack": "npm run build && node scripts/check-syntax.js && node scripts/build-native.js copy && node scripts/build-native.js copy snapshot",
-    "pack": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --dir",
-    "dist": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --win && node scripts/make-release-hashes.js",
-    "postinstall": "npm run build && node scripts/patch-deps.js || exit 0",
     "fetch-npm": "npm run build && node scripts/fetch-npm.js",
     "fetch-runtime": "npm run build && node scripts/fetch-node.js && node scripts/fetch-npm.js",
-    "electron:fetch": "node node_modules/electron/install.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "tsc -p tsconfig.json",
-    "build:native": "node scripts/build-native.js build",
-    "test:native": "node scripts/build-native.js test",
-    "clippy:native": "node scripts/build-native.js clippy",
-    "pretest": "npm run build",
-    "test": "node scripts/test-runner.js"
+    "bench:boot": "npm run build && node scripts/bench-boot.js",
+    "postinstall": "npm run build && node scripts/patch-deps.js || exit 0"
   },
   "dependencies": {
     "@deepseek-ai/cordis-plugin-group": "1.0.1",
@@ -56,10 +52,7 @@
     "zstddec": "0.2.0"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
-    "electron": "^43.4.0",
-    "electron-builder": "^26.15.3",
-    "typescript": "^7.0.2",
-    "unzipper": "^0.12.3"
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
   }
 }

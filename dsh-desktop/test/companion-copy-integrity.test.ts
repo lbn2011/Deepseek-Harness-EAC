@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { copyPluginPackage } from '../lib/desktop/companion-sync.js';
+import { copyPluginPackage } from '../lib/plugin-copy.js';
 
 test('copyPluginPackage repairs a missing file even when the source stamp remains', () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-plugin-copy-'));

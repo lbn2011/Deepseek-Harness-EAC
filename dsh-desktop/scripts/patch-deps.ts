@@ -1,8 +1,8 @@
 'use strict';
 // 依赖层小补丁（幂等）：目录选择器 worker 无消息退出时，把真实退出码/信号带进
 // 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-host-directory-picker-native', 'lib', 'index.js');
@@ -75,13 +75,14 @@ function patchSettingsNavScroll(): void {
   console.log('[patch-deps] 已补丁 settings-general：设置弹窗左栏可滚动，底部条目不再被裁掉');
 }
 
-// 函数工具桥接兼容补丁：部分外部工具适配器忽略 JSON Schema 的 required 数组，
-// 把所有 properties 错当成必填。全权限默认策略下不存在可升级的更宽模式，仍
-// 暴露 sandbox_permissions/justification 会让适配器强制提交一条必然失败的同级
-// 升级请求。仅在默认 danger-full-access 时不暴露这对可选字段；执行层的严格
-// 升级校验不变。会话切换到较窄策略后需重载工具 schema 才会再次暴露升级字段。
-// 覆盖三个工具：dsh-tool-pwsh / dsh-tool-fs / dsh-tool-bash（同为
-// `defaultMode === void 0 ? [] : ESCALATION_TARGETS` 模式，缺一即漏）。
+// 函数工具桥接兼容补丁（18b0fd4 + 9d068c2 自 main 移植）：部分外部工具适配器
+// 忽略 JSON Schema 的 required 数组，把所有 properties 错当成必填。全权限默认
+// 策略下不存在可升级的更宽模式，仍暴露 sandbox_permissions/justification 会让
+// 适配器强制提交一条必然失败的同级升级请求。仅在默认 danger-full-access 时
+// 不暴露这对可选字段；执行层的严格升级校验不变。会话切换到较窄策略后需重载
+// 工具 schema 才会再次暴露升级字段。覆盖三个工具：dsh-tool-pwsh / dsh-tool-fs /
+// dsh-tool-bash（同为 `defaultMode === void 0 ? [] : ESCALATION_TARGETS` 模式，
+// 缺一即漏）。
 const OPTIONAL_ESCALATION_MARKER = 'dsh-desktop-optional-escalation';
 const OPTIONAL_ESCALATION_TARGETS = [
   path.join(root, 'node_modules', '@deepseek-ai', 'dsh-tool-pwsh', 'lib', 'index.js'),

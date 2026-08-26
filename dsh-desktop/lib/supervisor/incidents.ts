@@ -6,9 +6,9 @@
  * 关联版本、日志、发生时间和恢复动作」。列表按时间倒序（新在前）。
  */
 
-import fs = require('node:fs');
-import path = require('node:path');
-import os = require('node:os');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { state } from '../state.js';
 import { log } from '../log.js';
 
@@ -47,7 +47,7 @@ export function recordIncident(pluginId: string, inc: Omit<Incident, 'id' | 'at'
 /** 每插件最多保留条数（防止长期抖动刷盘）。 */
 const MAX_PER_PLUGIN = 50;
 
-function prune(_pluginId: string, dir: string): void {
+function prune(pluginId: string, dir: string): void {
   try {
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
     for (const f of files.slice(0, Math.max(0, files.length - MAX_PER_PLUGIN))) {

@@ -3,16 +3,43 @@
 // L2 Node sidecar 实体化（ADR 0002；T3-a 第二阶段）。
 // 职责：
 //   1. stdio 行分隔 JSON-RPC 分发器（协议与 ping.js 一致，Rust L1 唯一对话面）
-//   2. 挂载 dsh-desktop/lib/desktop/* 全部 13 个模块（ctx 注入按宿主语义提供）
+//   2. 挂载 dsh-desktop/lib/* 统一模块（ctx 注入按宿主语义提供）
 //   3. 白名单方法注册表 + mod.call 通用逃生舱（白名单模块内具名导出直调）
 //
 // 纪律：stdout 只走协议帧；一切日志/兜底输出走 stderr。
 
-import path = require('node:path');
-import os = require('node:os');
-import fs = require('node:fs');
-import cp = require('node:child_process');
-import readline = require('node:readline');
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as cp from 'node:child_process';
+import * as readline from 'node:readline';
+import type { HostCtx, HostShortcutLink } from '../../dsh-desktop/lib/host-ctx.js';
+import { initHostCtx } from '../../dsh-desktop/lib/host-ctx.js';
+import { state, initVNextState } from '../../dsh-desktop/lib/state.js';
+import { setLogSink } from '../../dsh-desktop/lib/log.js';
+import { bridge } from '../../dsh-desktop/lib/bridge.js';
+import * as procMod from '../../dsh-desktop/lib/proc.js';
+import * as pathsMod from '../../dsh-desktop/lib/paths.js';
+import * as serverMod from '../../dsh-desktop/lib/server.js';
+import * as guardBoxMod from '../../dsh-desktop/lib/guard.js';
+import * as runtimePatchesMod from '../../dsh-desktop/lib/session-heal.js';
+import * as companionSyncMod from '../../dsh-desktop/lib/plugins.js';
+import { COMPANION_PLUGINS, pluginUpdateSources } from '../../dsh-desktop/lib/plugin-registry-data.js';
+import { copyPluginPackage } from '../../dsh-desktop/lib/plugin-copy.js';
+import * as pluginOpsMod from '../../dsh-desktop/lib/plugin-manager-core.js';
+import * as marketMod from '../../dsh-desktop/lib/market-ops.js';
+import * as shortcutsMod from '../../dsh-desktop/lib/shortcuts.js';
+import * as junctionPatrolMod from '../../dsh-desktop/lib/watchdog-boot.js';
+import * as clientUpdateMod from '../../dsh-desktop/lib/update-flow.js';
+import * as previewMod from '../../dsh-desktop/lib/preview.js';
+import * as fileRootsMod from '../../dsh-desktop/lib/paths.js';
+import * as recoveryCenter from '../../dsh-desktop/lib/recovery-center/register-sidecar.js';
+import * as extHost from '../../dsh-desktop/lib/extension-host/manager.js';
+import * as bridgeServer from '../../dsh-desktop/lib/extension-host/bridge-server.js';
+import { registerIpc } from '../../dsh-desktop/lib/ipc/index.js';
+import { setDefaultIpcSurface } from '../../dsh-desktop/lib/ipc/transport.js';
+import { createSidecarIpcSurface } from './ipc-surface.js';
+import * as rescueIntegration from './rescue-integration.js';
 
 // 资源根：开发态 tauri-shell/sidecar → 仓库根/dsh-desktop；
 // 打包态 resources/sidecar → resources/dsh-desktop（少一级）。
@@ -26,11 +53,13 @@ function resolveDesktopRoot(): string {
 const DSH_DESKTOP_ROOT = process.env.DSH_RESOURCE_ROOT
   ? path.join(process.env.DSH_RESOURCE_ROOT, 'dsh-desktop')
   : resolveDesktopRoot();
-const LIB = (m: string): string => path.join(DSH_DESKTOP_ROOT, 'lib', 'desktop', m);
-
 function say(s: string): void { process.stderr.write('[sidecar] ' + s + '\n'); }
 
-// ---- 宿主语义（对齐 Electron main.js 的注入值） --------------------------
+// ---- 宿主语义（对齐 legacy-shell main.js 的注入值） --------------------------
+const APP_NAME = 'Deepseek Harness EAC';
+const appDataDir = path.join(os.homedir(), 'AppData', 'Roaming');
+const userDataDir = path.join(appDataDir, APP_NAME);
+const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 const log = (tag: string, msg: string): void => say('[' + tag + '] ' + msg);
 
 let pkgVersion = '0.0.0';
@@ -38,78 +67,50 @@ try {
   pkgVersion = JSON.parse(fs.readFileSync(path.join(DSH_DESKTOP_ROOT, 'package.json'), 'utf8')).version || pkgVersion;
 } catch { /* 保持缺省 */ }
 
-type Mod = { init: (d: unknown) => void } & Record<string, unknown>;
-const mount = (name: string): Mod => require(LIB(name)) as Mod;
+type Mod = Record<string, unknown>;
 
-const procMod = mount('proc');
-const platformMod = mount('platform') as Mod & {
-  createDesktopPlatform(): {
-    userDataDir(): string;
-    capabilities(): Record<string, unknown>;
-  };
-  pluginCapabilityDetails(platform?: NodeJS.Platform): Record<string, { status: string; reason: string }>;
-};
-const desktopPlatform = platformMod.createDesktopPlatform();
-const userDataDir = desktopPlatform.userDataDir();
-const appDataDir = path.dirname(userDataDir);
-const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-const pathsMod = mount('runtime-paths');
-const profileMod = mount('profile');
-const guardBoxMod = mount('guard-box');
-const runtimePatchesMod = mount('runtime-patches');
-const companionSyncMod = mount('companion-sync');
-const pluginOpsMod = mount('plugin-ops');
-const marketMod = mount('market');
-const shortcutsMod = mount('shortcuts');
-const junctionPatrolMod = mount('junction-patrol');
-const clientUpdateMod = mount('client-update');
-const previewMod = mount('static-preview');
-const fileRootsMod = mount('file-roots');
-const bootMod = mount('boot-server');
-
-const MOUNTED = ['proc', 'platform', 'runtime-paths', 'profile', 'guard-box', 'runtime-patches', 'companion-sync', 'plugin-ops', 'market', 'shortcuts', 'junction-patrol', 'client-update', 'static-preview', 'file-roots', 'boot-server'];
-
-// ---- vnext 隔离体系（vnext-absorb Phase 2）：supervisor / extension-host / 恢复中心 ----
-// 这些模块位于 lib/{state,log,supervisor,extension-host,recovery-center}，
-// 不走 lib/desktop 的 mount 通道，按绝对路径 require（编译产物 .js）。
-const vnextState = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'state.js')) as {
-  initVNextState(d: { dshHome?: string; userDataDir?: string; logsDir?: string }): void;
-  state: { eacBridge: { url: string; token: string; close(): void } | null };
-};
-const vnextLog = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'log.js')) as {
-  setLogSink(fn: ((tag: string, msg: string) => void) | null): void;
-};
-const recoveryCenter = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'recovery-center', 'register.js')) as {
-  init(d: {
-    appVersion: string;
-    profile: string;
-    restartWebService(): Promise<{ ok: boolean; url?: string; error?: string }>;
-    requestSafeModeRelaunch(): void;
-  }): void;
-  handleRcAction(action: string, value?: unknown): Promise<Record<string, unknown>>;
-  archivePluginProfiles(): void;
-};
-const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'manager.js')) as {
-  ensureBundledSdkPlugins(): void;
-  startEnabledExtensionHosts(): Promise<void>;
-  shutdownExtensionHosts(): Promise<void>;
-  getExtensionHostManager(): unknown;
-};
-const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
-  startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
-};
+const MOUNTED = [
+  'state', 'log', 'host-ctx', 'proc', 'paths', 'server', 'boot', 'watchdog-boot',
+  'shortcuts', 'plugin-copy', 'plugins', 'plugin-manager-core', 'market-modules',
+  'market-ops', 'preview', 'guard', 'balance-ui', 'bridge', 'migration', 'onboarding',
+  'run-state', 'session-heal', 'terminal', 'tray', 'update-flow', 'window', 'ipc/index',
+  'snapshot/manager', 'snapshot/scheduler', 'supervisor/registry',
+  'supervisor/state-machine', 'supervisor/installer', 'supervisor/permissions',
+  'supervisor/incidents', 'extension-host/manager', 'extension-host/bridge-server',
+  'extension-host/job-fence', 'recovery-center/register-sidecar',
+];
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
-const desktopProfileFn = profileMod.desktopProfile as () => string;
+const profileMod = pathsMod;
+const bootMod = {
+  startAndWait: async (overlays: string[] = []) => {
+    const webUrl = await serverMod.startAndShowGuarded(overlays);
+    return { webUrl, port: Number(new URL(webUrl).port) };
+  },
+  stopServer: async () => {
+    const current = state.serverProc;
+    if (!current) return;
+    procMod.killTree(current);
+    state.serverProc = null;
+    await procMod.waitForProcExit(current, 20000);
+  },
+  killAndWaitForRestart: async () => {
+    const current = state.serverProc;
+    if (!current) return;
+    procMod.killTree(current);
+    state.serverProc = null;
+    await procMod.waitForProcExit(current, 20000);
+  },
+  setIsRestarting: (value: boolean) => { state.restartingServer = value; },
+  state: () => ({ running: !!state.serverProc, webUrl: state.webUrl }),
+};
+const desktopProfileFn = pathsMod.desktopProfile;
 const showBoxFallback = async (opts: Record<string, unknown>) => {
   say('[dialog] ' + String((opts && opts.title) || '') + ': ' + String((opts && opts.message) || ''));
   return { response: 0 };
 };
-const notifyFallback = (n: { title: string; body: string }): void => {
-  say('[notify] ' + n.title + ': ' + n.body);
-  notify('shell.system-notification', { title: n.title, body: n.body });
-};
-// .lnk 驱动（硬门槛④）：PowerShell WScript.Shell COM 实现，接口对齐 Electron
+const notifyFallback = (n: { title: string; body: string }) => say('[notify] ' + n.title + ': ' + n.body);
+// .lnk 驱动（硬门槛④）：PowerShell WScript.Shell COM 实现，接口对齐 legacy-shell
 // shell.readShortcutLink / writeShortcutLink（同步、失败抛错）。路径经环境
 // 变量传入，规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
 function psLnkRead(p: string): Record<string, unknown> {
@@ -170,43 +171,63 @@ try {
   }
 }
 
-procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfileFn });
-pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => false, resourcesPath: () => '', platform: process.platform });
-profileMod.init({ log, getDshHome: () => dshHome });
-guardBoxMod.init({
+// ---- Task 5.3：统一模块宿主上下文注入（lib/host-ctx.js 的 sidecar 适配） ----
+// lib/* 统一模块经 host-ctx 取宿主能力（Task 7 全量挂载后本注入即其在 Tauri
+// 宿主下的唯一宿主面；现阶段传递加载的 state/log/recovery-center 等尚未消费
+// host-ctx，提前装配保证双入口过渡期语义就位）。取值对齐上方过渡模块 init：
+//   · 打包态判定＝DSH_RESOURCE_ROOT 显式指定，或 sidecar 旁 dsh-desktop 布局
+//     （打包态 resources/sidecar + resources/dsh-desktop；开发态仓库根/dsh-desktop）
+//   · GUI 类能力（消息框/通知）走 stderr 无头兜底；剪贴板/.lnk 复用 PowerShell 实现
+const hostCtxMod = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'host-ctx.js')) as {
+  initHostCtx(d: HostCtx): void;
+};
+const HOST_IS_PACKAGED = !!process.env.DSH_RESOURCE_ROOT
+  || !fs.existsSync(path.join(path.resolve(__dirname, '..', '..', 'dsh-desktop'), 'package.json'));
+const HOST_RESOURCES_PATH = process.env.DSH_RESOURCE_ROOT
+  || (HOST_IS_PACKAGED ? path.resolve(__dirname, '..') : '');
+const hostPathOverrides: Record<string, string> = {};
+hostCtxMod.initHostCtx({
+  isPackaged: () => HOST_IS_PACKAGED,
+  resourcesPath: () => HOST_RESOURCES_PATH,
+  appVersion: () => pkgVersion,
   log,
-  getDshHome: () => dshHome,
-  getDesktopProfile: desktopProfileFn,
-  getDshBin: () => (pathsMod.dshBin as () => string)(),
+  exitProcess: (code) => process.exit(code),
+  // 优雅退出＝请壳走 ExitRequested 有界收口（同 client-update 交接通道，
+  // 壳会同步有界关停 sidecar/dsh web，不在 sidecar 里直接 process.exit）。
+  requestQuit: () => notify('shell.quit-for-update', {}),
+  notify: (o) => say('[notify] ' + o.title + ': ' + o.body),
+  copyToClipboard: (text) => { void writeClipboardText(text); },
+  getPath: (name) => hostPathOverrides[name]
+    || (name === 'appData' ? appDataDir : name === 'desktop' ? path.join(os.homedir(), 'Desktop') : userDataDir),
+  setPath: (name, value) => { hostPathOverrides[name] = value; },
+  removeAppMenu: () => { /* 无原生菜单概念：no-op */ },
+  showMessageBox: (opts) => {
+    // 无头兜底（对齐 host-ctx NODE_DEFAULT 语义）：内容走 stderr 可追溯，
+    // 应答取 cancelId（＝用户取消/关闭的保守选择）。
+    say('[dialog] ' + opts.title + ': ' + opts.message + (opts.detail ? ' — ' + opts.detail : ''));
+    return Promise.resolve({ response: typeof opts.cancelId === 'number' ? opts.cancelId : opts.buttons.length - 1 });
+  },
+  // 外链/完全重启复用壳层既有通道（main.rs shell.open-external 带 http(s)
+  // 校验；shell.relaunch＝app.restart 整壳重启）；openPath/showItemInFolder
+  // 的壳层通道随 Task 8 补齐，现阶段 stderr 无头兜底（对齐 notify/
+  // showMessageBox 过渡语义；Task 7 IPC 域挂载前无 sidecar 侧消费者）。
+  openExternal: (url) => notify('shell.open-external', { url }),
+  openPath: (p) => say('[shell] openPath: ' + p),
+  showItemInFolder: (p) => say('[shell] showItemInFolder: ' + p),
+  relaunch: () => notify('shell.relaunch', {}),
+  shortcuts: {
+    // PowerShell 实现返回 Record<string, unknown>（过渡 shortcutsMod 同款），
+    // 结构即 HostShortcutLink 子集，收窄桥接给统一模块。
+    readLink: (p) => psLnkRead(p) as HostShortcutLink,
+    writeLink: (p, operation, o) => psLnkWrite(p, operation, o as unknown as Record<string, unknown>),
+  },
 });
-runtimePatchesMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
-shortcutsMod.init({
-  log,
-  showBox: showBoxFallback,
-  getUserDataDir: () => userDataDir,
-  getDshHome: () => dshHome,
-  isPackaged: () => false,
-  systemPath: (kind: string) => (kind === 'appData' ? appDataDir : kind === 'desktop' ? path.join(os.homedir(), 'Desktop') : ''),
-  links: { read: psLnkRead, write: psLnkWrite },
-});
-junctionPatrolMod.init({
-  log,
-  isQuitting: () => false,
-  isRestartingServer: () => false,
-  getServerProc: () => null,
-  showMainWindow: () => say('showMainWindow (host-delegated)'),
-  notify: notifyFallback,
-});
+
 // /update 进度页开关状态（showUpdateWindow/destroy 维护）。
 let updateWindowOpen = false;
-clientUpdateMod.init({
+const clientUpdateHost = {
   log,
   showBox: showBoxFallback,
-  getPlatform: () => process.platform,
-  openExternal: async (url: string) => {
-    notify('shell.open-external', { url });
-    return true;
-  },
   isQuitting: () => quitting,
   getAppVersion: () => pkgVersion,
   getUserDataDir: () => userDataDir,
@@ -233,7 +254,7 @@ clientUpdateMod.init({
     agent: (stage: string) => notify('client-update.progress', { channel: 'agent', stage: stage }),
     force: (m: unknown) => notify('client-update.progress', Object.assign({ channel: 'force' }, m && typeof m === 'object' ? m : {})),
   }),
-  // 更新交接前有界关停 dsh web（= Electron prepareQuitForClientUpdate 的服务面）。
+  // 更新交接前有界关停 dsh web（= legacy-shell prepareQuitForClientUpdate 的服务面）。
   prepareQuitForClientUpdate: async () => {
     say('prepareQuitForClientUpdate: 关停 dsh web');
     try { await (bootMod.stopServer as () => Promise<void>)(); } catch (e) { say('关停失败（继续交接）: ' + String(((e as Error).message) || e)); }
@@ -243,19 +264,7 @@ clientUpdateMod.init({
   exitProcess: () => { notify('shell.quit-for-update', {}); },
   // 打包态取壳层 exe 目录（DSH_SHELL_EXE）；开发态 sidecar 的 node 不适用。
   getExecDir: () => (process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : path.dirname(process.execPath)),
-});
-previewMod.init({ log, showBox: showBoxFallback, exitDamaged: () => process.exit(1), isPackaged: () => false, resourcesPath: () => '' });
-marketMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
-pluginOpsMod.init({ log });
-companionSyncMod.init({
-  log,
-  getDshHome: () => dshHome,
-  getUserDataDir: () => userDataDir,
-  applyLegacySkinChoice: () => (shortcutsMod.applyLegacySkinChoice as () => void)(),
-  showMainWindow: () => say('showMainWindow (host-delegated)'),
-  notify: notifyFallback,
-  platform: process.platform,
-});
+};
 
 // ---- boot-server（P2：dsh web 服务编排） --------------------------------
 // settings 兼容层：与 updater.js 的 userData/settings.json 同文件同语义
@@ -274,35 +283,27 @@ function notify(method: string, params: unknown): void {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params: params == null ? {} : params }) + '\n');
 }
 
-bootMod.init({
-  log,
-  getUserDataDir: () => userDataDir,
-  getDesktopProfile: desktopProfileFn,
-  desktopProfileDir: () => (profileMod.desktopProfileDir as () => string)(),
-  nodeExe: () => (pathsMod.nodeExe as () => string)(),
-  dshBin: () => (pathsMod.dshBin as () => string)(),
-  loadSettings,
-  saveSettings,
-  isQuitting: () => quitting,
-  onServerDied: (info: unknown) => notify('boot.server-died', info),
-});
-
 say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
 
 // ---- vnext 初始化：日志 sink + 共享状态 + 恢复中心 ctx ----------------------
-vnextLog.setLogSink(log);
-vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
+setLogSink(log);
+initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
+bridge.ensureGuard = guardBoxMod.ensureGuard;
+bridge.processPendingMarketOps = marketMod.processPendingMarketOps;
+bridge.syncCompanionPlugins = companionSyncMod.syncCompanionPlugins;
+bridge.healProfileModules = companionSyncMod.healProfileModules;
+bridge.restoreKeptArtifacts = companionSyncMod.restoreKeptArtifacts;
 
 // 前置文件树准备（= main.js boot() 在 startAndShowGuarded 之前的序列，摘除
 // GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽修复 → 构建
 // 产物回填。boot.start 与重启/恢复中心 retry-boot 共用。
 async function preBootSync(): Promise<void> {
-  await (marketMod.processPendingMarketOps as () => Promise<void>)();
-  (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
-  (companionSyncMod.syncCompanionPlugins as () => void)();
-  (marketMod.syncBundledSkills as () => void)();
-  (companionSyncMod.healProfileModules as () => void)();
-  await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
+  await marketMod.processPendingMarketOps();
+  companionSyncMod.retireRemovedBuiltinPlugins(profileMod.desktopProfileDir());
+  companionSyncMod.syncCompanionPlugins();
+  companionSyncMod.syncBundledSkills();
+  companionSyncMod.healProfileModules();
+  await companionSyncMod.restoreKeptArtifacts(desktopProfileFn());
 }
 
 // 原地重启（= main.js restartWebServiceCore）：无锁窗口内消费市场排队 →
@@ -326,7 +327,7 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     await (marketMod.processPendingMarketOps as () => Promise<void>)();
     (companionSyncMod.syncCompanionPlugins as () => void)();
     (companionSyncMod.healProfileModules as () => void)();
-    await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
+    await companionSyncMod.restoreKeptArtifacts(desktopProfileFn());
     const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
     log('service', 'dsh web 服务已重启: ' + r.webUrl);
     notify('boot.web-ready', r);
@@ -374,17 +375,15 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     platform: process.platform,
     pid: process.pid,
     dshHome,
-    userDataDir,
-    capabilities: desktopPlatform.capabilities(),
     version: pkgVersion,
     modules: MOUNTED,
     balance: balanceCache,
   }),
   'profile.name': (): RpcResult => ({ name: desktopProfileFn() }),
   'profile.dir': (): RpcResult => ({ dir: (profileMod.desktopProfileDir as () => string)() }),
-  'runtime.nodeExe': (): RpcResult => ({ exe: (pathsMod.nodeExe as () => string)() }),
-  'runtime.dshBin': (): RpcResult => ({ bin: (pathsMod.dshBin as () => string)() }),
-  'plugins.removedIds': (): RpcResult => ({ ids: (companionSyncMod.removedPluginIds as () => unknown[])() }),
+  'runtime.nodeExe': (): RpcResult => ({ exe: procMod.nodeExe() }),
+  'runtime.dshBin': (): RpcResult => ({ bin: procMod.dshBin() }),
+  'plugins.removedIds': (): RpcResult => ({ ids: [...pluginOpsMod.removedPluginIds()] }),
   'guard.ensure': (): RpcResult => ({ ok: !!(guardBoxMod.ensureGuard as () => unknown)() }),
   // ---- boot.*（P2：dsh web 服务编排，Rust 壳的启动主链路） ----
   'boot.start': async (p): Promise<RpcResult> => {
@@ -419,7 +418,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     try {
       const mgr = extHost.getExtensionHostManager();
       const bridge = await bridgeServer.startExtensionBridgeServer(mgr);
-      vnextState.state.eacBridge = bridge;
+      state.eacBridge = bridge;
       process.env.DSH_EAC_BRIDGE_URL = bridge.url;
       process.env.DSH_EAC_BRIDGE_TOKEN = bridge.token;
       say('[vnext] Core Bridge 端点就绪: ' + bridge.url);
@@ -472,13 +471,12 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     } catch { /* 回退空串（菜单隐藏更新源区） */ }
     return {
       appVersion: pkgVersion,
-      agentVersion: (pathsMod.dshVersion as () => string)(),
-      agentSource: (pathsMod.dshVersionSource as () => string)(),
+      agentVersion: procMod.dshVersion(),
+      agentSource: procMod.dshVersionSource(),
       notifyOnTurnEnd: s.notifyOnTurnEnd !== false,
       closeToTray: s.closeToTray !== false,
       exitAction,
       shortcutPolicy: s.shortcutPolicy === 'never' ? 'never' : 'auto',
-      capabilities: desktopPlatform.capabilities(),
       iconDataUri,
       repoUrls: { github: repos.github ? 'https://github.com/' + repos.github : '', gitee: repos.gitee ? 'https://gitee.com/' + repos.gitee : '' },
       staticPort: 0,
@@ -538,7 +536,7 @@ async function refreshBalance(): Promise<unknown> {
   result.prices = tier(pricing.period) as Record<string, unknown>;
   result.pricing = { ...pricing, prices: { peak: tier('peak'), offpeak: tier('offpeak') } };
   balanceCache = result;
-  // 推送（= Electron 的 webContents.send('dsh:balance')；桥转发成 window 事件）。
+  // 推送（= legacy-shell 的 webContents.send('dsh:balance')；桥转发成 window 事件）。
   notify('dsh.balance', result);
   return result;
 }
@@ -548,6 +546,32 @@ function startBalanceLoop(): void {
   void refreshBalance().catch(() => {});
   balanceTimer = setInterval(() => { void refreshBalance().catch(() => {}); }, 15 * 60 * 1000);
   if (balanceTimer.unref) balanceTimer.unref();
+}
+
+// 剪贴板（PowerShell Set-Clipboard；legacy-shell clipboard 的无 GUI 等价物）。
+// 剪贴板是全系统互斥句柄：被其他进程占开时 Set-Clipboard 报 ExternalException
+// （打开剪贴板失败），通常亚秒级释放——有界重试把瞬时锁变成成功。
+function writeClipboardText(text: string, attempts = 3): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ps = cp.spawn('powershell', ['-NoProfile', '-Command', '$input | Set-Clipboard'], { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+    ps.on('error', () => resolve(false));
+    ps.on('exit', (code) => {
+      if (code === 0) { resolve(true); return; }
+      if (attempts > 1) {
+        setTimeout(() => { void writeClipboardText(text, attempts - 1).then(resolve); }, 300);
+        return;
+      }
+      resolve(false);
+    });
+    ps.stdin.end(text, 'utf8');
+  });
+}
+
+// 系统默认程序打开文件（= shell.openPath；explorer 解析关联）。
+function openPathNative(p: string): Promise<string> {
+  return new Promise((resolve) => {
+    cp.exec(`start "" "${p.replace(/"/g, '')}"`, { windowsHide: true }, (err) => resolve(err ? String(err.message) : ''));
+  });
 }
 
 const batch: Record<string, (p: RpcParams) => unknown> = {
@@ -648,17 +672,14 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
       return { ok: true, models: [] };
     }
   },
+  'clipboard.write-text': async (p): Promise<Record<string, unknown>> => {
+    const text = (p && p.text) as string;
+    if (typeof text !== 'string' || !text || text.length > 2048) return { ok: false };
+    return { ok: await writeClipboardText(text) };
+  },
   'image-paste.save': (p): Record<string, unknown> => {
     try {
       return (pluginOpsMod.imagePasteSave as (d: string, n: string) => Record<string, unknown>)(String((p && p.dataUrl) || ''), String((p && p.name) || '粘贴图片'));
-    } catch (e) {
-      return { ok: false, error: String(((e as Error).message) || e) };
-    }
-  },
-  // 拖入文件保存（dsh-file-drop-eac）：任意文件 data URL → 临时目录 → 真实路径。
-  'file-drop.save': (p): Record<string, unknown> => {
-    try {
-      return (pluginOpsMod.fileDropSave as (d: string, n: string) => Record<string, unknown>)(String((p && p.dataUrl) || ''), String((p && p.name) || '拖入文件'));
     } catch (e) {
       return { ok: false, error: String(((e as Error).message) || e) };
     }
@@ -705,7 +726,7 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
     log('file-revert', JSON.stringify(results.slice(0, 20)));
     return { results };
   },
-  'files.authorize-open': (p): Record<string, unknown> => {
+  'files.open': async (p): Promise<Record<string, unknown>> => {
     const fp = (p && p.path) as string;
     if (typeof fp !== 'string' || !path.isAbsolute(fp)) return { ok: false, error: 'path must be absolute' };
     const skillsRoots = [
@@ -722,22 +743,28 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
     if ((fileRootsMod.DANGEROUS_EXT as RegExp).test(fp)) {
       return { ok: false, error: 'executable files are not openable from the file view' };
     }
-    if (!fs.existsSync(fp)) return { ok: false, error: 'file not found' };
-    return { ok: true, path: fp };
+    try {
+      if (!fs.existsSync(fp)) return { ok: false, error: 'file not found' };
+      const msg = await openPathNative(fp);
+      if (msg) return { ok: false, error: msg };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
   },
   'plugins.list': (): Record<string, unknown> => {
     return { list: (pluginOpsMod.pluginManagerCollect as () => unknown[])() };
   },
-  'plugins.set-enabled': (p): Record<string, unknown> => {
-    return (pluginOpsMod.pluginManagerSetEnabled as (id: string, en: boolean) => Record<string, unknown>)(String((p && p.id) || ''), !!(p && p.enabled));
+  'plugins.set-enabled': (p) => {
+    return pluginOpsMod.pluginManagerSetEnabled(String((p && p.id) || ''), !!(p && p.enabled));
   },
-  'plugins.set-removed': (p): Record<string, unknown> => {
-    return (pluginOpsMod.pluginManagerSetRemoved as (id: string, rm: boolean) => Record<string, unknown>)(String((p && p.id) || ''), !!(p && p.removed));
+  'plugins.set-removed': (p) => {
+    return pluginOpsMod.pluginManagerSetRemoved(String((p && p.id) || ''), !!(p && p.removed));
   },
   'plugins.updates': async (p): Promise<Record<string, unknown>> => {
     try {
-      const ctx = (pathsMod.updCtx as () => unknown)();
-      const sources = (companionSyncMod.pluginUpdateSources as () => Array<{ id: string }>)();
+      const ctx = procMod.updCtx();
+      const sources = pluginUpdateSources(pluginOpsMod.removedPluginIds());
       const list = await (pluginUpdater.checkPluginUpdates as (c: unknown, s: unknown[], o: unknown) => Promise<unknown[]>)(ctx, sources, {
         force: !!(p && p.force),
         profileDirP: (profileMod.desktopProfileDir as () => string)(),
@@ -753,14 +780,14 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
     }
   },
   'plugins.update': async (p): Promise<Record<string, unknown>> => {
-    const sources = (companionSyncMod.pluginUpdateSources as () => Array<{ id: string }>)();
+    const sources = pluginUpdateSources(pluginOpsMod.removedPluginIds());
     const source = sources.find((s) => s.id === String(p && p.id));
     if (!source) return { ok: false, error: '未知或不可更新的内置插件: ' + String(p && p.id) };
     try {
-      const res = await (pluginUpdater.applyBuiltinPluginUpdate as (c: unknown, s: unknown, o: unknown) => Promise<Record<string, unknown>>)((pathsMod.updCtx as () => unknown)(), source, {
+      const res = await (pluginUpdater.applyBuiltinPluginUpdate as (c: unknown, s: unknown, o: unknown) => Promise<Record<string, unknown>>)(procMod.updCtx(), source, {
         profileDirP: (profileMod.desktopProfileDir as () => string)(),
         guard: (guardBoxMod.ensureGuard as () => unknown)(),
-        copyIntoProfile: (overlayDir: string, name: string) => (companionSyncMod.copyPluginPackage as (d: string, o: string, n: string) => void)((profileMod.desktopProfileDir as () => string)(), overlayDir, name),
+        copyIntoProfile: (overlayDir: string, name: string) => copyPluginPackage(profileMod.desktopProfileDir(), overlayDir, name),
       });
       if (!res.ok) return res;
       if (res.noop) return { ok: true, noop: true, current: res.current, latest: res.latest };
@@ -784,7 +811,7 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
   'guard.action': (p): Record<string, unknown> => {
     const action = String((p && p.action) || '');
     const value = p && p.value;
-    const g = (guardBoxMod.ensureGuard as () => Record<string, (...a: unknown[]) => unknown>)();
+    const g = guardBoxMod.ensureGuard();
     switch (action) {
       case 'status': {
         const st = loadSettings() as { shareWebProfile?: boolean };
@@ -851,7 +878,7 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
       // ---- P4 更新链 + 壳页动作（对齐 main.js 各 case 语义） ----
       case 'check-client-update': {
         try {
-          await (clientUpdateMod.runClientUpdateFlow as (manual: boolean) => Promise<void>)(true);
+          await clientUpdateMod.runClientUpdateFlow(true);
         } catch (e) {
           log('client-update', '手动检查失败: ' + String(((e as Error).message) || e));
         }
@@ -892,11 +919,11 @@ const updater = require(path.join(DSH_DESKTOP_ROOT, 'updater.js')) as {
   applyUpdate(c: unknown, latest: string, o: { onProgress: (ev: string) => void }): Promise<void>;
 };
 const onboardingLogic = require(path.join(DSH_DESKTOP_ROOT, 'scripts', 'onboarding.js')) as {
-  CORE_PLUGIN_IDS: string[];
-  RECOMMENDED_PLUGIN_IDS: string[];
+  CORE_PLUGIN_IDS: Set<string>;
+  RECOMMENDED_PLUGIN_IDS: Set<string>;
   pluginCurrentState(entries: unknown[], plugins: unknown[]): Record<string, boolean>;
-  buildSelectionOps(plugins: unknown[], coreIds: string[], want: Set<string>, current: Record<string, boolean> | null): Array<{ id: string; enable: boolean }>;
-  sanitizeSelection(ids: unknown, plugins: unknown[], coreIds: string[]): Set<string>;
+  buildSelectionOps(plugins: unknown[], coreIds: Set<string>, want: Set<string>, current: Record<string, boolean> | null): Array<{ id: string; enable: boolean }>;
+  sanitizeSelection(ids: unknown, plugins: unknown[], coreIds: Set<string>): Set<string>;
   buildCatalog(plugins: unknown[], o: unknown): unknown[];
 };
 let agentUpdateBusy = false;
@@ -907,7 +934,7 @@ async function runAgentUpdateFlow(manual: boolean): Promise<void> {
     if (manual) await showBoxFallback({ type: 'info', title: '更新', message: '更新正在进行中，请稍候。' });
     return;
   }
-  const c = (pathsMod.updCtx as () => unknown)();
+  const c = procMod.updCtx();
   let latest: string;
   try {
     latest = await updater.checkLatest(c);
@@ -957,7 +984,7 @@ async function runAgentUpdateFlow(manual: boolean): Promise<void> {
       buttons: ['立即重启', '稍后重启'],
     });
     if (r2 === 0) {
-      // 整壳重启（sidecar 随壳有界收口；run-state 属 Electron watchdog 机制，Tauri 用崩溃计数替代）。
+      // 整壳重启（sidecar 随壳有界收口；run-state 属 legacy-shell watchdog 机制，Tauri 用崩溃计数替代）。
       notify('shell.relaunch', {});
     }
   } catch (err) {
@@ -974,14 +1001,7 @@ async function runAgentUpdateFlow(manual: boolean): Promise<void> {
 
 // ---- 内置插件选择向导（wizard.open / onboard.*，对齐 main.js ipc 面） -------
 // 页面 = 壳层 /wizard（serve assets/onboarding.html + 桥注入），RPC 走本表。
-const companionPlugins = () => {
-  const select = companionSyncMod.companionPluginsForPlatform as ((platform: NodeJS.Platform) => unknown[]) | undefined;
-  return select ? select(process.platform) : (companionSyncMod.COMPANION_PLUGINS as unknown[]) || [];
-};
-const onboardingCapabilities = platformMod.pluginCapabilityDetails(process.platform);
-const unavailablePluginIds = new Set(Object.entries(onboardingCapabilities)
-  .filter(([, capability]) => capability.status === 'unavailable')
-  .map(([id]) => id));
+const companionPlugins = () => COMPANION_PLUGINS as unknown[];
 function pluginDirSize(dirName: string): number {
   let total = 0;
   try {
@@ -1002,7 +1022,6 @@ function buildOnboardingCatalog(): unknown[] {
     recommendedIds: onboardingLogic.RECOMMENDED_PLUGIN_IDS,
     describe: (name: string) => ((pluginOpsMod.pluginManagerPackageDescription as (n: string) => string)(name)),
     dirSize: (dirName: string) => pluginDirSize(dirName),
-    capabilities: onboardingCapabilities,
   });
 }
 function pluginCurrentState(): Record<string, boolean> | null {
@@ -1027,10 +1046,10 @@ Object.assign(methods, {
     const ids = p && Array.isArray(p.ids) ? p.ids : [];
     try {
       (profileMod.ensureDesktopProfileInit as () => void)();
-      const want = (onboardingLogic.sanitizeSelection as (i: unknown, p: unknown[], c: string[], u: Set<string>) => Set<string>)(ids, companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS, unavailablePluginIds);
+      const want = (onboardingLogic.sanitizeSelection as (i: unknown, p: unknown[], c: Set<string>) => Set<string>)(ids, companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS);
       const current = wizardMode === 'rerun' ? pluginCurrentState() : null;
       const ops = (onboardingLogic.buildSelectionOps as unknown as (
-        p: unknown[], c: string[], w: Set<string>, cur: Record<string, boolean> | null,
+        p: unknown[], c: Set<string>, w: Set<string>, cur: Record<string, boolean> | null,
       ) => Array<{ id: string; enable: boolean }>)(companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS, want, current);
       const errors: string[] = [];
       for (const op of ops) {
@@ -1071,30 +1090,23 @@ function scheduleAutoUpdateChecks(): void {
   if (autoUpdateScheduled) return;
   autoUpdateScheduled = true;
   setTimeout(() => {
-    try { (clientUpdateMod.offerPendingClientUpdate as () => void)(); } catch { /* 无待装更新 */ }
-    (clientUpdateMod.runClientUpdateFlow as (m: boolean) => Promise<void>)(false).catch(() => { /* 网络失败不打扰 */ });
+    try { clientUpdateMod.offerPendingClientUpdate(); } catch { /* 无待装更新 */ }
+    clientUpdateMod.runClientUpdateFlow(false).catch(() => { /* 网络失败不打扰 */ });
   }, 60000).unref();
   setInterval(() => {
-    (clientUpdateMod.runClientUpdateFlow as (m: boolean) => Promise<void>)(false).catch(() => { /* 网络失败不打扰 */ });
+    clientUpdateMod.runClientUpdateFlow(false).catch(() => { /* 网络失败不打扰 */ });
   }, 12 * 3600 * 1000).unref();
 }
 
 // ---- 救援链（硬门槛②；实现于 rescue-integration.ts，同产物编译） ----------
-const rescueIntegration = require('./rescue-integration') as {
-  initRescue(host: unknown): void;
-  rescueMethods(): Record<string, (p: Record<string, unknown> | undefined) => unknown>;
-  recordBootFailureNow(errText: string): void;
-  shouldEnterRescueNow(): boolean;
-  clearRescueState(): void;
-};
 rescueIntegration.initRescue({
   dshHome,
   userDataDir,
   pkgVersion,
   desktopProfile: desktopProfileFn,
   desktopProfileDir: () => (profileMod.desktopProfileDir as () => string)(),
-  dshVersion: () => (pathsMod.dshVersion as () => string)(),
-  dshVersionSource: () => (pathsMod.dshVersionSource as () => string)(),
+  dshVersion: () => procMod.dshVersion(),
+  dshVersionSource: () => procMod.dshVersionSource(),
   log,
   notify,
   mods: { boot: bootMod, guardBox: guardBoxMod, pluginOps: pluginOpsMod, companionSync: companionSyncMod, balance },

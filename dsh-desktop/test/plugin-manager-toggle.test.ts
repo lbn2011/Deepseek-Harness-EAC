@@ -109,12 +109,12 @@ test('移除：dsh 官方 `-` 空块项 + 独立 id 格式（退役 tdai-memory 
     '    insert:\n' +
     '        -\n' +
     '            id: tdai-memory\n' +
-    '            name: \'dsh-tdai-memory\'\n' +
+    "            name: 'dsh-tdai-memory'\n" +
     '-\n' +
     '    insert:\n' +
     '        -\n' +
     '            id: mobile-fix\n' +
-    '            name: \'dsh-web-mobile-fix\'\n';
+    "            name: 'dsh-web-mobile-fix'\n";
   assert.equal(hasEntryId(t, 'tdai-memory'), true, '应识别空块项格式的 tdai-memory');
   const r = removePluginFromPatch(t, 'tdai-memory');
   assert.equal(hasEntryId(r, 'tdai-memory'), false, 'tdai-memory 应被移除');
@@ -143,7 +143,7 @@ test('hasEntryId：dsh 官方空块项格式命中与短 id 前缀不误配', ()
     '    insert:\n' +
     '        -\n' +
     '            id: dsh-pet-settings\n' +
-    '            name: \'dsh-pet-settings\'\n';
+    "            name: 'dsh-pet-settings'\n";
   assert.equal(hasEntryId(t, 'dsh-pet'), false, '短 id 不得命中长 id 兄弟（空块项格式）');
   assert.equal(hasEntryId(t, 'dsh-pet-settings'), true, '完整 id 应命中空块项格式');
 });

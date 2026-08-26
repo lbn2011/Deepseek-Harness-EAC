@@ -16,8 +16,8 @@
  * 由 Agent 看到（不炸核心回合）；上下文收集超时 → 丢弃该插件贡献。
  */
 
-import http = require('node:http');
-import crypto = require('node:crypto');
+import * as http from 'node:http';
+import * as crypto from 'node:crypto';
 import type { ExtensionHostManager } from './manager.js';
 import { log } from '../log.js';
 

@@ -24,14 +24,106 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
 排队消费对 update 类任务遗漏）；本地链接（link:/file:）插件从上游接管更新
 （junction EPERM 处理 + 失败回滚）；24h 发布保护期过滤；市场自身经官方
 内置插件更新自更新）→
-5.0.0（本版：桌面壳切换 Tauri —— Rust L1 壳 + Node sidecar L2 + dsh 内核
+5.0.0（main 主线：桌面壳切换 Tauri —— Rust L1 壳 + Node sidecar L2 + dsh 内核
 零改动 L3 三层架构（ADR 0002）；安装包体积 241MB → 155MB；全功能桥
 （窗口/托盘/浮窗隔离/退出策略/救援链/快捷方式维护）；自更新接线（客户端
 整树交换 + agent 更新 + 自动检查定时器）；安装器自动接管旧 Electron 版；
 新增 /update /about /wizard 壳页；便携版改 zip 分发；Electron 链路冻结
-保留为可回退救生索）→
+保留为可回退救生索；vnext 支线：全量 TS 隔离重构 + Rust 原生快照管理器 +
+main 主线 4.4.1–4.6.0 修复移植 + 4.4.x 升级适配）→
+5.1.0（main 主线：内核升级 0.1.1-rc.2 + picturereader 3.1.0 + unified-market
+资产基线 + 并发 web 检测/安全模式守卫/升级超时等修复）→
+6.0.0（本版：vnext × Tauri 统一合并 —— 全量 TS 模块基座（37 模块 ctx 注入）
++ 插件隔离架构（extension-host + Rust Job Object 围栏）+ 快照管理器
++ Windows/Linux 双平台编译分发（deb/AppImage）+ Electron 退役、Tauri 转正）→
 
-## [5.0.0] · 2026-08-23
+## [6.0.0] — 2026-08-24
+
+### 统一合并：vnext 重构基座 × Tauri 壳（merge/vnext-tauri）
+- **架构统一**：`refactor/vnext-ts-isolation`（全量 TS 37 模块、插件隔离、
+  Rust supervisor/snapshot、boot -79.8%、499 测试）与 `main`（Tauri 壳 +
+  Node sidecar、内核 0.1.1-rc.2、NSIS/便携打包链）按模块级择优映射合并：
+  实现取 refactor、宿主无关模式取 main ctx 注入，两支线成果完整保留。
+- **Electron 退役**：Tauri + WebView2 为唯一壳；插件隔离系统与快照管理器
+  迁移运行于 Node sidecar（宿主无关）；main.ts/preload/electron-builder
+  链路移除。
+- **双平台**：Windows（NSIS + 便携 zip）与 Linux（deb + AppImage）同批
+  编译与分发；Linux 进程围栏采用 PDEATHSIG + 进程组（对照 Windows
+  Job Object 语义）；Linux 升级走系统包管理器（沿用 v4.4.0-linux 约定）。
+- **内核与资产**：dsh 内核 0.1.1-rc.2；资产基线统一（picturereader 3.1.0、
+  unified-market、file-drop-eac 等）。
+- **main 修复全量移植**：并发 dsh web 检测（#22）、安全模式守卫、
+  schemastery 首启依赖、profile 完整性、可选升级字段、更新停滞超时 300s、
+  托盘完全重启等 11 项。
+
+## [5.0.0 · vnext 支线] — 2026-08-21
+
+### 同步：main 主线 4.4.1–4.6.0 更新与 bug 修复（TS 架构移植）
+- **更新链路修复（#112/#119）**：GitHub Release 代理优先链
+  （`gh.geekertao.top` → 原地址 → Gitee 兜底）；代理地址附加缓存破坏参数
+  `?v=<版本>&sha256=<哈希>`（期望哈希下载前求一次，同时喂代理 URL 与
+  下载后强校验）；`compareVersions` 补齐缺省版本段 + 兼容 `v` 前缀
+  （4.4 与 4.4.0 相等，修复重复提示安装）。
+- **安装版更新黑窗/自杀修复（#93）**：改用隐藏 PowerShell 助手脚本
+  （`-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden`）——精确等待
+  主进程 PID（上限 20s，超时只杀该 PID、不再 taskkill /T 全树）后再执行
+  ActionScript 备份/安装/回滚链；`apply-update.cmd` 不再含
+  ping/tasklist/find/taskkill，杜绝黑窗闪烁与「杀掉自己」的中断事故。
+- **首次安装崩溃根治（#119）**：`healRowConfig` 自愈改为扫描整个条目块
+  （块内任意位置已有 `config:` 即不再补），修复 `name → disabled → config`
+  形态被误判补出第二份 config → YAML duplicated mapping key → 启动失败。
+- **桌面快捷方式去重（#91）**：新增 `lib/shortcut-maintenance.ts`（单一
+  创建者原则：安装版归 NSIS、便携版归运行时），跨创建者重复项自动清理，
+  用户改过名/图标/参数的快捷方式永不删除。
+- **退役插件清理加固（#130 相关）**：`plugin-manager-patch` 识别 dsh 官方
+  「空块项+独立 id」多行 patch 格式；BOM / CRLF 容错（Windows PowerShell
+  写出的 patch 首字节 BOM 不再导致条目识别失败）。
+- **e2e 修复**：有真实 API key 时强制隔离测试 home 的
+  `agent-default-model` 指向 deepseek 官方端点；识图链路检查迁移到
+  picturereader；node 泄漏检查排除 `E2E_RUNNER_PID`。
+- **便携版产物名带版本**：`Deepseek-Harness-EAC-Portable-v<version>-x64.exe`
+  （与 Setup 同形态；release.yml 上传通配 `Portable-*.exe`）。
+- **测试同步**：新增 `client-updater-proxy`（代理/缓存破坏 9 项）、
+  `updater-version`（版本比较 2 项）；更新 `client-updater-node-arg`
+  （PowerShell 助手断言）、`update-mirror-chain`（Windows EPERM 重试）；
+  `plugin-manager-toggle` +4（dash 格式/BOM/CRLF）、`patch-row-heal` +4
+  （条目块扫描回归）；移除已退役 tool-vision 的 stream-guard 测试。
+- **文档同步**：README/README.en 下载链接改版本化命名（v5.0.0）、
+  Linux v4.4.0 包链接、picturereader 替换 tool-vision/tdai-memory 描述、
+  贡献者网格 + 交流群二维码（QQ/微信）。
+
+### 适配：main 主线（≤4.6.0 旧 JS 布局）升级到本版，.dsh 插件与配置零丢失
+- 版本号 4.4.0 → **5.0.0**：必须高于 main 主线最后版本 4.6.0，
+  老客户端的 compareVersions 才会判定「有新版本」并触发更新。
+- NSIS 产物命名对齐 origin/main 4.6.0：`Deepseek-Harness-EAC-Setup-v<version>-x64.exe`
+  （v4.4.1 起的命名形态）。老更新器的直连正则 `/setup.*x64\.exe$/i`
+  与 Gitee 分片候选（v4.4.1 起第 4 候选）都能命中；便携版同形态带版本
+  （`Portable-v<version>`，解压缓存目录名由固定字符串决定、与产物名无关）。
+- selectAsset 补回 Gitee 分片第 4 候选 `Deepseek-Harness-EAC-<kind>-v<version>-x64.exe`
+  （origin/main v4.4.1 commit 0178672 引入，重构迁移时丢失）：否则本版
+  自身命名在 Gitee >100MB 分片形态下永远匹配不上，5.x → 更新会卡死在
+  「未找到匹配的安装包资产」。
+- installer.nsh 新增 customInstall 残留清理：幂等删除 main 旧布局独有、
+  vnext 不再随包的 `rescue-agent.js` / `wsl-backend.js` / `extract-css.mjs`
+  （仅 `resources\app` 内，对不存在文件静默成功）。
+- release.yml 上传路径通配化 `Setup-*.exe`（带版本名）。
+- 数据零丢失保障：`.dsh`（全部插件/配置/skills）在 `%USERPROFILE%`、
+  settings.json 在 userData，安装器删除动作均不触碰；settings 采用
+  读-改-写全量合并，main 版写入的未知字段升级后完整保留。
+- 契约测试 `test/upgrade-contract.test.ts`（10 项）：版本门槛、双命名
+  契约（老/新更新器 × 直连/分片）、残留清理、.dsh 不可触碰、发布上传
+  面全部锁死，防回归。
+
+### 新增：Rust 原生快照管理器（.dsh 增量备份/恢复）
+- Rust napi 引擎（`native/snapshot/`）：SHA-256 内容寻址去重、
+  mtime+size 索引缓存、分支树、带安全快照的恢复；默认排除
+  skills/sessions/.agent-presets/memories/node_modules（可自定义）。
+- TS 编排（`lib/snapshot/`）+ IPC 域 `snapshot:*` + 全屏备份树面板
+  （⋯ 菜单「重启 Web 服务」与「重新加载」之间）：分支创建、快照恢复、
+  立即备份、定时备份（间隔/每日模式）；备份存于 `.dsh-snapshots`
+  （.dsh 同级）。
+
+## [5.0.0 · main 主线] · 2026-08-23
 
 ### 新增：设置面板滚轮修复插件
 

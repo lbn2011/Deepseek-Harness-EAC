@@ -138,13 +138,15 @@ test('dsh-soul-md schema: path 带默认值，不再是 required', () => {
   assert.doesNotMatch(src, /path:\s*z\.string\(\)\.required\(\)/, 'path 不能是 required 无默认');
 });
 
-// 壳层侧双保险：新增行必须显式写 config，且启动时 heal 存量坏行。
-// ADR 0002：注册表与 sync 实现迁至 lib/desktop/companion-sync.js。
-test('companion-sync: soul-md 行带 config + 启动时执行存量 heal', () => {
-  const src = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
-  assert.match(src, /id:\s*'soul-md',[^\n]*config:\s*\{\s*path:\s*'soul\.md'\s*\}/);
-  assert.match(src, /healSoulMdPatchRow\(patch\)/);
-  assert.match(src, /block \+= configLinesFor\(p\.config\)/);
+// main.js 侧双保险：新增行必须显式写 config，且启动时 heal 存量坏行。
+// Task 5：COMPANION_PLUGINS 表与 syncCompanionPlugins 迁 lib/
+// plugin-registry-data.ts / lib/plugins.ts。
+test('main.js: soul-md 行带 config + 启动时执行存量 heal', () => {
+  const registrySrc = readFileSync(join(root, 'lib', 'plugin-registry-data.ts'), 'utf8');
+  const pluginsSrc = readFileSync(join(root, 'lib', 'plugins.ts'), 'utf8');
+  assert.match(registrySrc, /id:\s*'soul-md',[^\n]*config:\s*\{\s*path:\s*'soul\.md'\s*\}/);
+  assert.match(pluginsSrc, /healSoulMdPatchRow\(patch\)/);
+  assert.match(pluginsSrc, /block \+= configLinesFor\(p\.config\)/);
 });
 
 // 市场安装（dsh plugin add 登记 bundles）与 overlay 写行双挂载 →

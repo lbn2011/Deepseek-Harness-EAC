@@ -20,21 +20,21 @@
 - ✅ **微信 ClawBot / OpenClaw 桥（v4）**：设置页「ClawBot」栏扫码绑定微信官方 ClawBot 小程序，微信里直接驱动常驻 DSH 会话（每用户独立会话/工作区/白名单）；OpenAI 兼容端点供 OpenClaw 网关接入
 - ✅ **会话完成系统通知**：agent 任务跑完时弹 Windows 系统通知，点击回到窗口
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 10 款 Web UI 皮肤（9 款 dsh-web-ui 皮肤 + 1 款深海女仆工坊），互斥切换、默认不启用、重启生效；随包标注出处与许可（详见「界面皮肤」章节）
-- ✅ **内置社区插件套件**（v2.0 起，详见「内置社区插件」章节）：插件市场 / 外置视觉模型 / 长期记忆 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
+- ✅ **内置社区插件套件**（v2.0 起，详见「内置社区插件」章节）：插件市场 / 全能读图读文档 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
 - ✅ **崩溃急救与撤销（v4，dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
 - ✅ **插件启停管理（v4）**：设置页「插件 → 管理」不重启切换任意插件启停（含默认禁用的大肥鱼桌宠）
 - ✅ **一键迁移（一键夺舍）**：设置页选择任意已有 AI 工具目录（如 Codex / Claude 安装目录）→ 自动新建工作区与对话 → 发送迁移指令，AI 在对话中全程可视化提取 skills / MCP 配置 / 长期记忆
 - ✅ **错误日志一键复制（v4.1）**：启动失败 / DSH 服务停止的报错弹窗带「复制日志」按钮，一键复制完整诊断信息（错误、堆栈、日志目录、最近日志尾部）供反馈
 - ✅ **应用内反馈入口（v4.1）**：⋯ 菜单与托盘「反馈建议…」直达 GitHub Issues，关于弹窗附交流群号
-- ✅ **拖文件/文件夹进对话（dsh-file-drop-eac，取代 dsh-file-drop）**：把本地文件/文件夹直接拖进对话输入框 —— 文本/代码自动注入（上限 256KB，带文件名头）；.sql / 二进制 / 超大文件只注入完整路径提示让 agent 按路径读取；文件夹识别 + 降级提示；图片不接管（交给内置图片入口/缩略图，避免重复注入）
+- ✅ **拖文件进对话（v4.1，dsh-file-drop）**：把本地文件直接拖进对话输入框 —— 文本/代码自动注入（上限 256KB，带文件名头）；图片注入路径配合 inspect_image 让 agent 看图；二进制/超大文件注入路径提示
 - ✅ **设置页边栏自定义（v4.1，dsh-settings-nav-custom）**：设置面板左侧导航底部「自定义边栏」，按需显示/隐藏与排序导航项，localStorage 持久化，默认全显
 - ✅ **更新保障（v4.1）**：更新前强制插件/配置快照（失败中止更新）；官方 dsh 更新后上一版本备份保留到下次启动确认健康，启动失败可一键「回退到上一版本」；便携版客户端更新后若新版崩溃自动回退上一版；更新完成弹窗明示插件/皮肤/会话全部保留
 
 ## 快速开始（成品用户）
 
-1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，下载最新版（v5.1.0，Tauri 重构壳）：
-   - [Deepseek.Harness.EAC_5.1.0_x64-setup.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_x64-setup.exe) —— 安装版，创建桌面/开始菜单快捷方式
-   - [Deepseek-Harness-EAC-5.1.0-portable.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek-Harness-EAC-5.1.0-portable.zip) —— 免安装便携版，解压后运行 `dsh-eac-shell.exe`
+1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，选其一（链接永久有效，始终指向最新版）：
+   - [Deepseek-Harness-EAC-Portable-v5.0.0-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v5.0.0-x64.exe) —— 免安装便携版，双击运行
+   - [Deepseek-Harness-EAC-Setup-v5.0.0-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v5.0.0-x64.exe) —— 安装版，创建桌面/开始菜单快捷方式
 2. 首次运行会显示启动动画，随后进入 DeepSeek Harness Web UI。
 3. 如尚未配置 API Key，在界面内完成配置即可开始使用（与命令行 dsh 完全一致）。
 
@@ -55,8 +55,8 @@
 ## 客户端自更新（封装层）
 
 - 启动 60 秒后及此后每 12 小时，自动查询上游仓库的最新 release（**GitHub Releases → Gitee Releases 双源回退**；可用环境变量 `DSH_DESKTOP_RELEASE_API` 指向自定义镜像 API），比较当前版本。
-- 发现新版本时弹窗询问：**立即更新 / 跳过此版本 / 稍后**；同意后带进度条下载安装包（便携版选 `*-portable.zip` 树交换更新，安装版直接下载运行安装包；Gitee 因单文件 100MB 限制拆分的 `.part1/.part2` 分片会自动按序下载并合并），下载到 `<数据目录>\updates\`。
-- **SHA-256 内容校验（v4）**：下载完成后强制校验文件哈希 —— 优先用 GitHub Release 资产自带的 digest 字段，其次取 Release 附带的 `SHA256SUMS.txt`（`make-portable.mjs` 生成，发布时随资产上传）；不一致 → 删除文件并中止更新，绝不运行被篡改或损坏的安装包。上游未提供哈希时记录告警并放行（老 Release 兼容）。
+- 发现新版本时弹窗询问：**立即更新 / 跳过此版本 / 稍后**；同意后带进度条下载安装包（便携版选 `*-portable-x64.exe`，安装版选 `Setup-*-x64.exe`；Gitee 因单文件 100MB 限制拆分的 `.part1/.part2` 分片会自动按序下载并合并），下载到 `<数据目录>\updates\`。
+- **SHA-256 内容校验（v4）**：下载完成后强制校验文件哈希 —— 优先用 GitHub Release 资产自带的 digest 字段，其次取 Release 附带的 `SHA256SUMS.txt`（`npm run dist` 自动生成，发布时随资产上传）；不一致 → 删除文件并中止更新，绝不运行被篡改或损坏的安装包。上游未提供哈希时记录告警并放行（老 Release 兼容）。
 - 确认重启后：**便携版**用 detached 脚本等待旧 exe 解锁 → 备份 → 原地替换 → 自动启动新版本（只读目录自动退化为直接启动新 exe）；**安装版**等待进程退出后以向导方式启动新安装包。失败自动保留当前版本，下次启动继续提示待安装更新。
 - **崩溃自回退（v4.1）**：便携版更新后，上一版 exe 备份与 marker 保留到新版首次健康启动；若新版启动失败（上次运行非干净退出），下次启动自动用上一版还原并保留崩溃副本、弹系统通知告知。
 - 菜单入口：chrome 栏 ⋯ 菜单 →「检查客户端更新…」；托盘菜单同样可用。跳过版本记录在 `settings.json`（`skipClientVersion`）。
@@ -134,17 +134,16 @@
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
-| `dsh-unified-market` | 统一插件市场：三源合一（awesome-dsh-plugin.com 精选目录 + GitHub `dsh-plugin` 生态 + npm 检索），安装走试装验证 + 冲突预检；已下载插件更新面板（一键全部/逐个更新）、自动更新三档、更新进度窗口、市场自更新 | 设置 → 插件 → 统一市场 |
+| `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测）；目录中已被客户端内置的插件显示「已内置」徽标并拒绝重复安装 | 设置 → 插件 → 插件市场 |
+| `zat-dsh-engine` | 第二插件市场（Zat 可视化市场）：GitHub `dsh-plugin` topic 检索、中文插件简介、国内镜像兜底 | 设置 → 插件 → Zat 标签页 |
 | `dsh-plugin-manager`（v4） | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停 | 设置 → 插件 → 管理 |
 | `dsh-message-rewind` | 对话回退（Trae 风格）：悬停任意用户消息 →「编辑并回退」→ 从该消息之前分叉新会话并自动重发编辑后内容，原会话保留 | 对话界面（消息 hover 按钮） |
 | `dsh-dock-settings` | Skills 与 MCP 管理：技能目录浏览（EAC 内置/用户来源徽标、打开目录）+ MCP 服务增删改（stdio / streamable-http），保存后一键重启生效 | 设置 → Skills 与 MCP |
 | `dsh-pet` | 桌面宠物：28 个透明动画的悬浮宠物，空闲呼吸、随机动作、屏幕游走 | 随包自动启用 |
 | `dsh-dafeiyu`（v4） | 大肥鱼桌宠：真实会话状态驱动的原生置顶窗口（六态动画 + 项目状态卡 + 摸头/戳一戳；角色素材按 ASSET_LICENSE 分发） | 默认禁用，「插件 → 管理」启用 |
 | `picturereader` | 全能读图/读文档：视觉孪生 adapter（原生缩略图 + 粘贴即用自动分析，opencode 等 pi-ai provider 也可用，杜绝 UNSUPPORTED_CONTENT）；隐私/智能/严谨三模式；本地工具链（像素扫描/3 引擎 OCR/裁剪/取色/对比/批量）；pdf/word/excel/ppt 转图片；可选外部 VLM 桥（OpenAI 兼容端点） | 设置 → 图片阅读 |
-| `computer-user` | 读屏 + 鼠标键盘自动化（Codex-style computer use）：截图读出屏幕、点击/输入/按键/滚动/拖拽/移动鼠标/读光标；配 picturereader 让纯文本模型驱动桌面；纯本地（PowerShell + Win32 SendInput，不调外部 API）；四模式（禁用/只读/手动批准/自动） | 设置 → 电脑操作 |
 | `dsh-soul-md` | soul.md 人设卡：可视化编辑人设，热重载即时生效；未配置时注册空 section，**完全不影响官方系统提示词** | 设置 → 人设卡 |
 | `dsh-web-mobile-fix` | Web UI 移动端适配修复 | 随包自动启用 |
-| `dsh-settings-scroll-fix` | 设置面板滚轮与溢出滚动修复；使用语义识别和实际尺寸检测，不依赖易变化的 CSS 哈希类名 | 随包自动启用 |
 | `dsh-easy-setup` | 一键迁移（一键夺舍）：选择目录 → 新建工作区与对话 → AI 全程可视化迁移 skills / MCP / 记忆 | 设置 → 一键迁移 |
 | `dsh-change-review`（v4） | AI 变更审核：监控本会话文件改动，手动/自动让模型复查自己刚做的改动（正确性/安全性/目标一致性），配合「文件」页一键还原 | 设置 → AI 变更审核 |
 | `dsh-undo-savepoint`（v4） | 崩溃急救与撤销：配置/插件代码快照、undo/redo、一键安全模式、密钥脱敏 vault、跨机迁移 ZIP | 对话顶部 undo/redo 按钮 + 快照面板 |
@@ -175,18 +174,13 @@
 要求：Windows + Node.js（仅构建机需要）+ npm。
 
 ```powershell
-npm install                    # 安装 dsh 内核与桌面层依赖（node_modules）
-npm run build                  # tsc 编译 TypeScript 产物（lib/*.js 等）
-npm run fetch-runtime          # 内置 node.exe + npm CLI（运行树依赖）
-npm test                       # node --test 全量单测（test/*.test.ts）
-
-node tauri-shell/stage-resources.mjs   # 装配打包资源（staged-resources：tsc + 生产 npm ci + patch-deps 重放）
-cd tauri-shell
-npx @tauri-apps/cli@2 build    # 编译 Rust 壳 + NSIS 安装包 → target/release/bundle/nsis/
-node make-portable.mjs         # 便携版 zip → target/release/portable/（含 SHA256SUMS.txt）
+npm install                    # 安装 dsh / electron / electron-builder
+npm run fetch-runtime          # 内置 node.exe + npm CLI（构建与开发都需要）
+npm start                      # 开发模式启动（窗口内跑 Web UI）
+npm run dist                   # 构建 portable + NSIS 安装包，输出到 dist/
 ```
 
-> 打包工具链（tauri-cli / NSIS / WixTools）由 npx 与 tauri 首次运行时自动下载，缓存于 `%LOCALAPPDATA%\tauri`；`stage-resources.mjs` 可用 `--skip-npm` 复用上次的生产 node_modules（内核未变更时省去重装）。
+> 网络受限时：Electron 二进制镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`（可 `npm run electron:fetch` 手动补拉）；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 >
 > 开发辅助脚本：`node scripts/check-latest.js`（检查/试装更新）、`node scripts/test-watcher.js`（通知检测单测）、`node scripts/inspect-session.js <file>`（会话日志事件词表）。
 
@@ -194,32 +188,33 @@ node make-portable.mjs         # 便携版 zip → target/release/portable/（�
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Tauri 壳 (dsh-eac-shell.exe, Rust)                      │
-│  · 窗口 / 托盘 / 菜单 / 生命周期                           │
-│  · WS 回环桥 127.0.0.1:19873（win.* 壳层本地拦截）        │
-│  · spawn sidecar → boot.start 拉起 dsh web                │
+│  Electron 壳 (main.js)                                   │
+│  · 单实例锁 / 窗口 / 菜单 / 生命周期                       │
+│  · 会话完成监听 (session-watcher.js) → 系统通知            │
+│  · 官方更新 (updater.js) → 用户同意后安装 overlay          │
+│  · spawn vendor|resources 里的 node.exe                   │
 └──────────────┬───────────────────────────────────────────┘
-               │  stdio JSON-RPC + WS 桥
+               │  dsh web --host 127.0.0.1 --port 0
                ▼
-       Node sidecar（server.js + bridge.js）
-       · lib/desktop/* 桌面模块族（更新/插件/救援/…）
-       · 拉起 dsh web --host 127.0.0.1 --port 0
-               │  就绪后 webUrl 回传
+       内置 node.exe + @deepseek-ai/dsh
+       路径解析：用户目录 overlay > 内置包
+       输出 "dsh web: http://127.0.0.1:<port>"
+               │  解析 URL，轮询 HTTP 200
                ▼
-       WebView2 加载 Web UI（仅本机回环访问）
+       原生窗口加载 Web UI（仅本机回环访问）
 ```
 
 关键决策：
 
 | 决策 | 原因 |
 | --- | --- |
-| 发版壳固定 Tauri v2 + NSIS | Electron 发布通道已停用；NSIS 装出 exe 同级 `sidecar/` + `dsh-desktop/` 兄弟目录（exe 同级直认，兼容 `resources/` 布局回退） |
-| resources 映射 staged-resources | 打包资源统一由 `stage-resources.mjs` 装配：npm ci 重装生产依赖后重放锚点补丁（patch-deps）与 vendored 修复，内置插件/皮肤原样进包 |
-| 内置独立 node.exe + npm | 预编译原生模块 ABI 与安装时的 Node 版本绑定；sidecar 用内置同版本 node 启动 |
-| WS 回环桥（127.0.0.1:19873） | 壳层与页面双向通信：窗口动作壳层本地拦截，其余转发 sidecar（P3 渐进收编） |
-| 稳定端口 + 受限端口重试 | 由 OS 分配空闲端口避免冲突；本机回环绑定不对外暴露 |
-| 更新走 overlay + staging 原子切换 | 更新失败零风险；便携版（zip 树交换）与安装版各自适配 |
-| 退出时进程树回收 | dsh 会派生 pwsh 等子进程，按进程树整体回收，不留孤儿进程 |
+| `asar: false` | dsh 依赖 sharp / node-pty / koffi 等原生模块，必须以真实文件落盘 |
+| 内置独立 node.exe + npm | 预编译原生模块 ABI 与安装时的 Node 版本绑定；Electron 内嵌 Node ABI 不同。内置同版本 node.exe 零配置保证一致，npm 用于官方更新。注意：electron-builder 复制 extraResources 时会剥掉嵌套 node_modules，npm 自己的依赖由 \`afterPack\` 钩子原样补拷（scripts/after-pack.js） |
+| `npmRebuild: false` | 绝不为 Electron 重编译原生模块，否则内置 node.exe 反而加载不了 |
+| `--port 0` + 解析 stdout | 由 OS 分配空闲端口，避免端口冲突；本机回环绑定不对外暴露 |
+| 退出时 `taskkill /T /F` | dsh 会派生 pwsh 等子进程，按进程树整体回收 |
+| 更新走 overlay + staging 原子切换 | 更新失败零风险；便携版（资源每次从 exe 解压）也能持久更新 |
+| 通知读会话日志而非 UI 协议 | 持久化格式是官方稳定接口；UI 的私有 RPC/SSE 协议随版本变化，容易失效 |
 
 ## 日志与排障
 
@@ -251,8 +246,8 @@ dsh-desktop/
 ├── assets/               # 加载页、更新进度页、图标、托盘图标、配套 dsh 插件
 │   └── plugins/          # 桌面壳配套（dsh-balance、dsh-file-changes、dsh-terminal、
 │                         # dsh-easy-setup、dsh-skin-switch）+ 内置社区插件
-│                         # （dsh-unified-market、dsh-soul-md、dsh-web-mobile-fix，
-│                         # 含 vendor 与自包含依赖）
+│                         # （dsh-webui-market、picturereader、
+│                         # dsh-soul-md、dsh-web-mobile-fix，含 vendor 与自包含依赖）
 │                         # 全部自动同步进 web profile
 ├── scripts/
 │   ├── fetch-node.js     # 内置 node.exe 复制脚本
@@ -270,4 +265,4 @@ dsh-desktop/
 
 ## License
 
-[MIT](LICENSE)。基于 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（MIT）。
+MIT。基于 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（MIT）。

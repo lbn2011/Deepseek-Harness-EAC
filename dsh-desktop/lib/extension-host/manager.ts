@@ -15,8 +15,8 @@
  * 注册表动态字段，不自造状态，保证恢复中心与这里的视图一致。
  */
 
-import path = require('node:path');
-import fs = require('node:fs');
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { createFence, fenceMode, type FenceHandle, type FenceMode } from './job-fence.js';
 import { RpcPeer } from './rpc.js';
 import { readRegistry, writeRegistry } from '../supervisor/registry.js';
@@ -142,7 +142,7 @@ export class ExtensionHostManager {
     return all.flat();
   }
 
-  /** Host 围栏档位（恢复中心展示真实平台保障级别）。 */
+  /** Host 围栏档位（win32-job / taskkill-fallback，恢复中心展示用）。 */
   fenceMode(): FenceMode {
     return fenceMode();
   }
@@ -434,7 +434,7 @@ export class ExtensionHostManager {
 }
 
 // ---------------------------------------------------------------------------
-// 生产单例（Electron 主进程装配；测试直接 new ExtensionHostManager(opts)）
+// 生产单例（legacy-shell 主进程装配；测试直接 new ExtensionHostManager(opts)）
 // ---------------------------------------------------------------------------
 
 let defaultManager: ExtensionHostManager | null = null;
@@ -442,10 +442,9 @@ let defaultManager: ExtensionHostManager | null = null;
 /** 生产 Manager：内置 node.exe + 根目录 host-bootstrap.js。 */
 export function getExtensionHostManager(): ExtensionHostManager {
   if (defaultManager) return defaultManager;
-  // 本地 Tauri 架构：nodeExe 走 lib/desktop/runtime-paths（dev=vendor/node，
-  // 打包=resources/node）。
+  // proc.ts 依赖 legacy-shell —— 仅在 legacy-shell 主进程装配时按需加载。
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { nodeExe } = require('../desktop/runtime-paths.js') as typeof import('../desktop/runtime-paths.js');
+  const { nodeExe } = require('../proc.js') as typeof import('../proc.js');
   defaultManager = new ExtensionHostManager({
     nodeExe: nodeExe(),
     hostBootstrapPath: path.resolve(__dirname, '..', '..', 'host-bootstrap.js'),
