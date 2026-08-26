@@ -46,7 +46,7 @@ jobs:
       - name: 安装 Linux 系统依赖
         if: runner.os == 'Linux'
         working-directory: ${{ github.workspace }}
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -81,6 +81,9 @@ jobs:
 
       - name: Rust 原生模块测试
         run: npm run test:native
+
+      - name: 预构建 TypeScript（生成 sidecar/bridge.js 供壳层 include_str! 引用）
+        run: npm run build
 
       - name: Tauri 壳测试
         run: cargo test --manifest-path ../tauri-shell/Cargo.toml

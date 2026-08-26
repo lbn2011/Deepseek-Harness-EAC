@@ -1,8 +1,8 @@
 'use strict';
 
-import fs = require('node:fs');
-import path = require('node:path');
-const yaml = require('js-yaml');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as yaml from 'js-yaml';
 
 const OLD_ENGINE = '@deepseek-ai/dsh-compaction-basic';
 const TRANSITION_ENGINE = 'dsh-compact/engine';
@@ -36,7 +36,7 @@ function readPrunerConfig(block: string): string[] {
   for (let i = start + 1; i < lines.length; i++) {
     if (/^\s*-\s*id:\s*/.test(lines[i]!)) break;
     const match = /^\s+(thresholdChars|headChars|tailChars):(\s*.+)$/.exec(lines[i]!);
-    if (match) result.push(`    ${match[1]}:${match[2]}`);
+    if (match) result.push(`    ${match[1]!}:${match[2]!}`);
   }
   return result;
 }
@@ -129,7 +129,7 @@ function migrateManagedCompactPresets(presetsRoot: string, log: (m: string) => v
   ));
 }
 
-export = {
+export {
   MANAGED_PRESETS,
   NEW_AGENT,
   OLD_ENGINE,

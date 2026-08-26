@@ -27,7 +27,7 @@ const ROOT_FILES = [
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
-  'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
+  'renderer-recovery.js', 'watchdog.js',
   'host-bootstrap.js',
 ];
 const SCRIPTS = [
