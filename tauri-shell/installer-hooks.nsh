@@ -1,11 +1,15 @@
 ; Deepseek Harness EAC — Tauri NSIS 安装钩子。
 ; 职责：
-;   1. legacy-shell → Tauri 无缝接管（v5.0 切换）：检测旧 legacy-shell 壳卸载键，
-;      静默卸载旧版再安装 —— 同安装目录、同快捷方式名，用户数据
-;      （%APPDATA%\Deepseek Harness EAC 与 ~/.dsh）不受影响。
-;      R6 实测修正：legacy-shell-builder NSIS 的卸载键名 = **productName**
+;   1. Electron → Tauri 无缝接管（v5.0 切换）+ Tauri 覆盖升级清理：
+;      检测旧壳卸载键（HKCU/HKLM 双 hive），静默卸载旧版再安装 ——
+;      同安装目录、同快捷方式名，用户数据（%APPDATA%\Deepseek Harness EAC
+;      与 ~/.dsh）不受影响。
+;      R6 实测修正：electron-builder NSIS 的卸载键名 = **productName**
 ;      （"Deepseek Harness EAC"），不是应用 identifier（com.deepseek.dsh.desktop）。
-;      两个候选键都探测，存在即处理。
+;      三个候选键名都探测（productName、Electron identifier、
+;      Tauri identifier），并同时查 HKCU 与 HKLM —— 旧版若曾 perMachine
+;      安装（HKLM hive），只查 HKCU 会漏掉 → 已安装列表出现两个版本
+;      （issue #224）。
 ;   2. 防御注册表脏值：
 ;      a) InstallLocation 内嵌引号会炸批处理解析 —— 读取后剥引号再使用。
 ;      b) UninstallString 指向已删除的卸载器（本机实测脏键：指向不存在的
@@ -17,8 +21,12 @@
 ;         取命令行剩余串当目录，带引号反而失效（实测退出码 2、零删除），
 ;         含空格目录无需引号；尾反斜杠先剥防边界歧义。
 
-!macro DSH_TakeoverOldShell KEYNAME
-  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "UninstallString"
+; 注意：currentUser 安装器对 HKLM 通常只有读权限，删除 HKLM 键会静默失败
+; （NSIS DeleteRegKey 无错误返回）。该路径为 best-effort：尽力卸载旧文件并
+; 提示，避免「两个版本并存 + 旧条目打开报错」；HKCU 场景才是全覆盖清理。
+
+!macro DSH_TakeoverOldShell HIVE KEYNAME
+  ReadRegStr $0 ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "UninstallString"
   ${If} $0 != ""
     ; UninstallString 常带整串引号：剥掉再判存。
     StrCpy $3 $0
@@ -28,7 +36,7 @@
       StrCpy $3 $3 -1
     ${EndIf}
     ; InstallLocation 剥引号防御（_?= 需要目录路径）。
-    ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "InstallLocation"
+    ReadRegStr $1 ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "InstallLocation"
     ${If} $1 != ""
       StrCpy $2 $1 1
       ${If} $2 == '"'
@@ -45,7 +53,7 @@
       ${EndIf}
     ${EndIf}
     ${If} ${FileExists} "$3"
-      DetailPrint "DSH EAC: 检测到旧壳（${KEYNAME}），静默卸载以接管安装（数据不受影响）"
+      DetailPrint "DSH EAC: 检测到旧壳（${KEYNAME} @ ${HIVE}），静默卸载以接管安装（数据不受影响）"
       ; 程序路径必须用剥过引号的 $3：内嵌原始 $0 展开成 ""path" 会导致
       ; spawn 失败（R6 实测复现）。_?= 必须裸写不加引号：NSIS 卸载器原样
       ; 取命令行剩余串当安装目录，带引号会内嵌字面 " 而静默失效（实测退出码 2、
@@ -56,7 +64,7 @@
       DetailPrint "DSH EAC: 旧壳卸载键为脏值（卸载器缺失），仅清理注册表"
     ${EndIf}
     ; 卸载器自删后键可能残留，兜底清理。
-    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}"
+    DeleteRegKey ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}"
   ${EndIf}
 !macroend
 
@@ -79,8 +87,18 @@
   !insertmacro DSH_KillAppExe "Deepseek Harness EAC.exe"
   ; 句柄异步释放，给文件系统一点缓冲（NSIS 原生 Sleep，不产生网络行为）。
   Sleep 2000
-  !insertmacro DSH_TakeoverOldShell "Deepseek Harness EAC"
-  !insertmacro DSH_TakeoverOldShell "com.deepseek.dsh.desktop"
+  ; 三个候选键名 × HKCU/HKLM 双 hive：覆盖
+  ;   - Electron 时代（productName 键 / com.deepseek.dsh.desktop 键，含
+  ;     perMachine 安装残留在 HKLM 的情况）；
+  ;   - Tauri 自身旧版（productName 键与 com.deepseek.dsh.desktop.tauri 键）。
+  ; HKLM 只读/删除失败走 best-effort（currentUser 安装器无提权），
+  ; 主路径（per-user 安装）在 HKCU 全覆盖。
+  !insertmacro DSH_TakeoverOldShell HKCU "Deepseek Harness EAC"
+  !insertmacro DSH_TakeoverOldShell HKCU "com.deepseek.dsh.desktop"
+  !insertmacro DSH_TakeoverOldShell HKCU "com.deepseek.dsh.desktop.tauri"
+  !insertmacro DSH_TakeoverOldShell HKLM "Deepseek Harness EAC"
+  !insertmacro DSH_TakeoverOldShell HKLM "com.deepseek.dsh.desktop"
+  !insertmacro DSH_TakeoverOldShell HKLM "com.deepseek.dsh.desktop.tauri"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

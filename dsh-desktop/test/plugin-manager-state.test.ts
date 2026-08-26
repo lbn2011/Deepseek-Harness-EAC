@@ -62,12 +62,20 @@ test('removed 插件显示 removed 且不可切换、不可移除', () => {
   assert.equal(fish.toggleable, false);
 });
 
-test('bundles 登记的核心插件进 core 组且不可移除、不可切换', () => {
-  const rows = collectPluginRows([], { companion, bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-fs'] });
+test('bundles 登记的内核骨架进 core 组、第三方 bundle 归 other（issue #212）', () => {
+  const rows = collectPluginRows([], { companion, bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-fs', 'user-codex'] });
   const base = rows.find((r) => r.name === '@deepseek-ai/dsh-base');
   assert.equal(base.group, 'core');
   assert.equal(base.removable, false);
   assert.equal(base.toggleable, false);
+  // 非内核白名单的 bundle（市场/dsh plugin add 装入）不再被标成核心：
+  // 旧实现一律 'core'，用户无法在管理页关闭/操作这些第三方插件。
+  const fsRow = rows.find((r) => r.name === '@deepseek-ai/dsh-fs');
+  assert.equal(fsRow.group, 'other');
+  assert.equal(fsRow.toggleable, true);
+  const userRow = rows.find((r) => r.name === 'user-codex');
+  assert.equal(userRow.group, 'other');
+  assert.equal(userRow.toggleable, true);
 });
 
 test('other 组：非配套的顶层/insert 条目（市场安装）按 id 去重', () => {

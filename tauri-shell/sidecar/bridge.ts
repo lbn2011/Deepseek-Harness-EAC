@@ -396,8 +396,91 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     maxBtn.setAttribute('aria-label', maxBtn.title);
   }
 
+  // ---------------------------------------------------------------------------
+  // UI 稳定性垫片（主窗与浮窗共用；issue #217 同款桥内 CSS 通道，不碰内核/插件）。
+  // 背景：DSH 0.1.x 配套插件与内核弹层存在三类布局问题，全新/覆盖安装均复现：
+  //  a) 抽搐 —— dsh-better-sidebar 对 #root 与中栏注入 0.3s margin 过渡，会话切换
+  //     或面板开合时整条中栏（含输入栏）随之滑动/回读抖动；这里的布局让位仍
+  //     保留，只是瞬间到位（transition 掐断）。
+  //  b) 新建对话裁剪 —— hero 阶段 scrollBody 用 justify-content:center 居中内容，
+  //     内容高于视口时顶部不可滚动到达、被 overflow 链与自绘标题栏切掉；改为
+  //     flex-start + 子项 margin-block:auto：放得下时居中、放不下时从顶排布可滚。
+  //  c) 模型选择弹层遮挡 —— 菜单 absolute 向上展开且 z 只有 20，顶部会捅出滚动
+  //     容器/视口并被高 z 覆盖物盖住；抬到内容层之上并支持「翻转向下」救援。
+  // ---------------------------------------------------------------------------
+  function injectUiPatchCss(): void {
+    if (document.getElementById('dsh-ui-patch')) return;
+    var tag = document.createElement('style');
+    tag.id = 'dsh-ui-patch';
+    tag.textContent = '\
+  html[data-dsh-title-bar-height] #root,\
+  html[data-dsh-title-bar-height] #root > div[data-slot="root"] > div > div:nth-child(2){transition:none!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody{justify-content:flex-start!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody > *{margin-block:auto!important}\
+  html[data-dsh-title-bar-height] ._7KE1Ra_menu{z-index:5100!important}\
+  html[data-dsh-title-bar-height] ._7KE1Ra_menu.dsh-popup-flip{top:calc(100% + 8px)!important;bottom:auto!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_composerStack:has(._7KE1Ra_menu){overflow:visible!important}';
+    document.head.appendChild(tag);
+  }
+
+  // 模型选择弹层救援：菜单绝对定位向上展开（最高 360px + 8px 间距），在 hero
+  // 页或矮窗口里顶部会越出滚动容器/视口被切。探到菜单顶部进入玻璃栏区（<40px）
+  // 就翻转向下展开，并按触发钮下方可用空间收缩高度；菜单关闭或空间充足时还原。
+  // 翻转向下后菜单会伸出 composerStack（overflow:auto）的盒子 —— 配套 CSS 用
+  // :has(._7KE1Ra_menu) 在菜单打开时放开该容器裁剪（见 injectUiPatchCss）。
+  function initPopupRescue(): void {
+    var MENU_SEL = '._7KE1Ra_menu';
+    var FLIP_CLS = 'dsh-popup-flip';
+    var BAR_EDGE = 40;
+    var probeTimer: number | null = null;
+    // 翻转态按菜单元素保存（WeakSet，菜单卸载即回收）：翻转与否只在菜单开起来
+    // 时判定一次。绝不能根据翻转后的 r.top 还原 —— 翻转让它 ≥40，还原又让它
+    // <40，会形成每 200ms 翻转↔复原的震荡（弹层自带抽搐，且导致位置随机）。
+    var flippedMenus = new WeakSet<HTMLElement>();
+
+    function probeMenus(): void {
+      probeTimer = null;
+      var menus = document.querySelectorAll(MENU_SEL);
+      var anyOpen = false;
+      for (var i = 0; i < menus.length; i++) {
+        var menu = menus[i] as HTMLElement;
+        var r = menu.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue; // 未渲染/已关闭
+        anyOpen = true;
+        if (!flippedMenus.has(menu) && r.top < BAR_EDGE) flippedMenus.add(menu);
+        if (flippedMenus.has(menu)) {
+          var trigger = menu.parentElement as HTMLElement | null;
+          var below = trigger ? window.innerHeight - trigger.getBoundingClientRect().bottom - 16 : 240;
+          menu.classList.add(FLIP_CLS);
+          // 下限 80（而非 120）：矮窗口下触发钮本身贴近视口底，过高的下限会让
+          // 菜单底部挤出视口（实测 470px 高时 120 的底超出 12px）。
+          menu.style.maxHeight = String(Math.max(80, Math.min(360, below))) + 'px';
+        } else {
+          menu.classList.remove(FLIP_CLS);
+          menu.style.maxHeight = '';
+        }
+      }
+      // 菜单存续期间低频轮询（内容加载会改变高度/位置）。
+      if (anyOpen) probeTimer = window.setTimeout(probeMenus, 200);
+    }
+
+    function scheduleProbe(): void {
+      if (probeTimer === null) probeMenus();
+    }
+
+    function start(): void {
+      if (!document.body) return;
+      new MutationObserver(scheduleProbe).observe(document.body, { childList: true, subtree: true });
+      window.addEventListener('resize', scheduleProbe, { passive: true });
+      scheduleProbe();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    else start();
+  }
+
   function injectFloatBar(): void {
     if (document.getElementById(FLOAT_BAR_ID)) return;
+    injectUiPatchCss();
     var style = document.createElement('style');
     style.textContent = '\
   #' + FLOAT_BAR_ID + '{position:fixed;top:0;left:0;right:0;height:' + FLOAT_BAR_HEIGHT + 'px;z-index:2147483000;\
@@ -429,6 +512,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   function injectChrome(): void {
     if (FLOAT_MODE) { injectFloatBar(); return; }
     if (document.getElementById(BAR_ID)) return;
+    injectUiPatchCss();
     var style = document.createElement('style');
     style.textContent = '\
 #' + BAR_ID + '{position:fixed;top:0;left:0;right:0;height:' + BAR_HEIGHT + 'px;z-index:2147483000;\
@@ -495,7 +579,14 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     document.documentElement.setAttribute('data-dsh-title-bar-height', String(BAR_HEIGHT));
 
     var layout = document.createElement('style');
-    layout.textContent = 'body{box-sizing:border-box!important;padding-top:' + BAR_HEIGHT + 'px!important}';
+    layout.textContent = 'body{box-sizing:border-box!important;padding-top:' + BAR_HEIGHT + 'px!important}' +
+      // issue #217：壳自绘标题栏 z-index 极高（2147483000），内核模型下拉、
+      // 优化提示词面板等 fixed/absolute 弹层在视口顶部附近会被标题栏或页内
+      // 高 z 容器盖住/糊掉。对常见弹层形态统一把层级提到内容层之上
+      // （5000，仍低于标题栏）。只提层级不动布局 —— 纯叠加修复。
+      'html[data-dsh-title-bar-height] [role="dialog"]:not([aria-hidden="true"]),' +
+      'html[data-dsh-title-bar-height] [data-floating-ui-portal],' +
+      'html[data-dsh-title-bar-height] [data-radix-popper-content-wrapper]{z-index:5000!important}';
     document.head.appendChild(layout);
 
     var bar = document.createElement('div');
@@ -572,6 +663,8 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
       if (document.visibilityState === 'visible') beat();
     });
   })();
+
+  initPopupRescue();
 })();
 
 // __DSH_MODULES_COMPAT_SHIM__ ---------------------------------------------------

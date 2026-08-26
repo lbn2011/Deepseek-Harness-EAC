@@ -166,16 +166,24 @@ public static class IconMask
 $jpg = Join-Path $assetsDir 'icon.jpg'
 
 if (Test-Path $jpg) {
-    # --- Mask the user-provided design --------------------------------------
+    # --- Mask the user-provided design (transparent rounded canvas, dark logo) ---
     $src = [System.Drawing.Bitmap]::FromFile($jpg)
     $main = [IconMask]::Process($src, 210, $true)
     $main.Save((Join-Path $buildDir 'icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
     $main.Save((Join-Path $assetsDir 'icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
     [IconMask]::SaveIco($main, (Join-Path $buildDir 'icon.ico'), @(16, 24, 32, 48, 64, 128, 256))
     [IconMask]::SaveIco($main, (Join-Path $assetsDir 'icon.ico'), @(16, 24, 32, 48, 64, 128, 256))
+    # FALLBACK: Tauri shell keeps its own icon set under tauri-shell/icons/; keep
+    # them in sync so the NSIS shortcut icon matches (issue #197 打包一致性).
+    $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $tauriIcons = Join-Path $repoRoot 'tauri-shell\icons'
+    if (Test-Path $tauriIcons) {
+        Copy-Item (Join-Path $assetsDir 'icon.ico') (Join-Path $tauriIcons 'icon.ico') -Force
+        Copy-Item (Join-Path $assetsDir 'icon.png') (Join-Path $tauriIcons 'icon.png') -Force
+    }
     $tray = [IconMask]::Tray($src, 32, 9)
     $tray.Save((Join-Path $assetsDir 'tray-icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-    Write-Output "icon masked from icon.jpg: icon.png (900x900, r=210), icon.ico (16-256), tray-icon.png (32x32, white chip)"
+    Write-Output "icon masked from icon.jpg: icon.png (900x900, transparent, r=210), icon.ico (16-256), tray-icon.png (32x32, white chip)"
     $src.Dispose(); $main.Dispose(); $tray.Dispose()
     exit 0
 }

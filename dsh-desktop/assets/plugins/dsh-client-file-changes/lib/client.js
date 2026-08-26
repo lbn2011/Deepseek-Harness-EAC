@@ -156,15 +156,23 @@ window.__ModuleLoader__.load({
 
 		/** 文件绝对路径 → 静态服务 URL。桌面壳有独立端口的静态服务器
 		 *  （不占 UI 连接池），否则回退到宿主 /dsh-files/static/。 */
-		let staticBasePromise = null;
+		// 只缓存「拿到有效端口」的成功结果；getInfo 返回空端口或报错时
+		// 不写入缓存，下次打开预览面板重新查询 —— 避免首次查询过早
+		// （预览服务刚 listen、IPC 时序竞态）把空值永久缓存住，导致此后
+		// 永远回退宿主路由（全新安装下宿主插件可能尚未挂载 → 白屏/404）。
+		let staticBaseState = null;
 		function staticBaseUrl() {
 			if (!window.dshDesktop || typeof window.dshDesktop.getInfo !== "function") return Promise.resolve("");
-			if (!staticBasePromise) {
-				staticBasePromise = window.dshDesktop.getInfo()
-					.then((i) => (i && i.staticPort) ? "http://127.0.0.1:" + i.staticPort : "")
-					.catch(() => "");
-			}
-			return staticBasePromise;
+			if (staticBaseState) return Promise.resolve("http://127.0.0.1:" + staticBaseState.port);
+			return window.dshDesktop.getInfo()
+				.then((i) => {
+					if (i && i.staticPort) {
+						staticBaseState = { port: i.staticPort };
+						return "http://127.0.0.1:" + i.staticPort;
+					}
+					return "";
+				})
+				.catch(() => "");
 		}
 		function staticUrlForPath(p) {
 			const segs = String(p).replace(/\\/g, "/").split("/").filter(Boolean);

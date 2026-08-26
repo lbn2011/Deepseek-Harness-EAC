@@ -1,4 +1,4 @@
-import { existsSync, openSync, closeSync, readSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, openSync, closeSync, readSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -87,6 +87,26 @@ export function auditLinuxBundle(root, options = {}) {
     }
     if (forbiddenPaths.some((needle) => containsBytes(file, needle))) {
       errors.push(`local build path embedded in Linux bundle: ${rel}`);
+    }
+  }
+  // issue #206：node-pty build/Release 与 prebuilds 双二进制错配 → 启动即崩。
+  // 装配脚本已剔除不一致的 build 目录；这里做归档层兜底：build/Release 的
+  // pty.node 存在时必须与 prebuilds/linux-x64/pty.node 内容一致，否则 FAIL。
+  const ptyBuild = path.join(absoluteRoot, 'dsh-desktop', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node');
+  const ptyPrebuilt = path.join(absoluteRoot, 'dsh-desktop', 'node_modules', 'node-pty', 'prebuilds', 'linux-x64', 'pty.node');
+  if (existsSync(ptyBuild)) {
+    if (!existsSync(ptyPrebuilt)) {
+      errors.push('node-pty build/Release/pty.node exists but prebuilds/linux-x64/pty.node is missing');
+    } else {
+      try {
+        const a = readFileSync(ptyBuild);
+        const b = readFileSync(ptyPrebuilt);
+        if (!a.equals(b)) {
+          errors.push('node-pty build/Release/pty.node differs from prebuilds/linux-x64/pty.node (stale build artifact will crash the terminal)');
+        }
+      } catch (error) {
+        errors.push(`node-pty binary comparison failed: ${String((error && error.message) || error)}`);
+      }
     }
   }
   if (errors.length) throw new Error(errors.join('\n'));

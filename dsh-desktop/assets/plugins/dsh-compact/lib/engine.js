@@ -45,27 +45,43 @@ export async function summarizeWithToolFreeFallback(summarize, input, onRetry = 
   }
 }
 
-export function registerAutomaticCompaction(ctx, engine) {
+// 自动压缩冷却：两次 pre-step 自动压缩之间，会话必须已有新的持久化进展
+// （surface.replaceGeneration 增长，即压缩后的检查点之外又产生了输出）且至少
+// 间隔 minGapMs。否则跳过 —— 阻断同一步 forced+pressure 双压与跨轮把刚生成
+// 的摘要立即再压掉的复压循环（频繁压缩 → 摘要连摘要 → 质量劣化）。
+const MIN_COMPACTION_GAP_MS = 15_000
+
+export function compactionGapOk(last, generation, timestamp, minGapMs) {
+  return last === undefined || (generation > last.generation && timestamp - last.at >= minGapMs)
+}
+
+export function registerAutomaticCompaction(ctx, engine, cfg = {}) {
+  const { now = () => Date.now(), minGapMs = MIN_COMPACTION_GAP_MS } = cfg
   const overflowRetries = new WeakMap()
   const overflowAgents = new WeakMap()
-  const outputOverflowPending = new WeakSet()
+  const lastCompaction = new WeakMap()
 
   const offPreStep = ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
     if (signal.aborted || !engine.policyFor(agent).enabled) return next()
     try {
-      // 输出截断兜底：turn/end 已持久化截断事实时，先强制压缩再放行请求，
-      // 避免用户「继续」把上下文越堆越大（#54）。失败绝不中断用户 turn。
-      if (outputOverflowPending.delete(agent.session)) {
-        try {
-          const forced = await engine.compactIfNeeded(agent, 'context-overflow', signal)
-          if (forced !== null) logResult(ctx, forced, 'output overflow')
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          ctx.logger?.warn?.(`dsh-compact output overflow compaction failed: ${message}; continuing the turn`)
-        }
-      }
+      // 输出截断（max-tokens/length finish）不再触发强制压缩：截断≠上下文满。
+      // 旧实现（#54 时代）会在截断后的首个 pre-step 以保留 0 的全量压缩把整段
+      // 历史换成一个摘要；频繁截断时每轮都烧历史 → 摘要连摘要、质量劣化。
+      // 是否压缩完全交给 pressure 阈值（thresholdRatio × contextWindow）与
+      // retainRatio 决定；真实上下文溢出仍由 agent/request-error 恢复路径兜底。
+      const generation = agent?.session?.surface?.replaceGeneration ?? 0
+      const last = lastCompaction.get(agent)
+      if (!compactionGapOk(last, generation, now(), minGapMs)) return next()
       const result = await engine.compactIfNeeded(agent, 'pressure', signal)
-      if (result !== null) logResult(ctx, result, 'step pressure')
+      if (result !== null) {
+        // 记录压缩完成后的代际：压缩检查点本身会造成一次 replaceGeneration
+        // 增长，下一次压缩必须再次等到新输出落盘且冷却期满。
+        lastCompaction.set(agent, {
+          at: now(),
+          generation: agent?.session?.surface?.replaceGeneration ?? generation,
+        })
+        logResult(ctx, result, 'step pressure')
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       ctx.logger?.warn?.(`dsh-compact step compaction failed: ${message}; continuing the turn`)
@@ -81,13 +97,6 @@ export function registerAutomaticCompaction(ctx, engine) {
     if (event.type === 'assistant/message') {
       const agent = overflowAgents.get(session)
       if (agent !== undefined) overflowRetries.delete(agent)
-      return
-    }
-    // turn/end 的 data.reason.kind 是持久化的结束原因（官方「已达到输出
-    // token 上限」提示读同一字段）：输出截断时标记会话，下一次 pre-step
-    // 先强制压缩再放行请求。
-    if (event.type === 'turn/end' && OUTPUT_TRUNCATION_CODES.has(event?.data?.reason?.kind)) {
-      outputOverflowPending.add(session)
     }
   })
 

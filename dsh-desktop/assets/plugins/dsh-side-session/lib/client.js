@@ -1113,6 +1113,33 @@ window.__ModuleLoader__.load({
       var animDraftState = useState(pluginSettings.animMs != null ? pluginSettings.animMs : 500);
       var animDraft = animDraftState[0];
       var setAnimDraft = animDraftState[1];
+      // API Key / 模型 / 基址：同样本地暂存、失焦才持久化。直接绑模块级
+      // pluginSettings 时，每个按键都会 settingsScope.set()（异步 IPC），
+      // 快照订阅回调 applySettingsSnapshot 在持久化完成前读到的还是旧值，
+      // 整体回写 pluginSettings → 输入框 value 被强制回退（敲一个字消失
+      // 一个字、删不进去）。草稿化后输入期间不再触碰设置域，外部快照
+      // 覆盖不到正在编辑的字段。
+      var apiKeyDraftState = useState(apiKey);
+      var apiKeyDraft = apiKeyDraftState[0];
+      var setApiKeyDraft = apiKeyDraftState[1];
+      var modelDraftState = useState(model);
+      var modelDraft = modelDraftState[0];
+      var setModelDraft = modelDraftState[1];
+      var endpointDraftState = useState(endpoint);
+      var endpointDraft = endpointDraftState[0];
+      var setEndpointDraft = endpointDraftState[1];
+      // 面板卸载（切设置页 / 模式切走）时把未提交草稿写回，避免丢输入。
+      // cleanup 的闭包固定捕获首次渲染的草稿值，故经 ref 取最新草稿。
+      var draftsRef = useRef({ apiKey: apiKeyDraft, model: modelDraft, endpoint: endpointDraft });
+      draftsRef.current = { apiKey: apiKeyDraft, model: modelDraft, endpoint: endpointDraft };
+      useEffect(function () {
+        return function () {
+          var d = draftsRef.current;
+          if (d.apiKey !== pluginSettings.apiKey) setPluginSetting("apiKey", d.apiKey);
+          if (d.model !== pluginSettings.model) setPluginSetting("model", d.model);
+          if (d.endpoint !== pluginSettings.endpoint) setPluginSetting("endpoint", d.endpoint);
+        };
+      }, []);
 
       return h(
         "div",
@@ -1199,8 +1226,9 @@ window.__ModuleLoader__.load({
                   className: "dss-set-input",
                   type: "password",
                   placeholder: "sk-...",
-                  value: apiKey,
-                  onChange: function (e) { setPluginSetting("apiKey", e.target.value); },
+                  value: apiKeyDraft,
+                  onChange: function (e) { setApiKeyDraft(e.target.value); },
+                  onBlur: function () { setPluginSetting("apiKey", apiKeyDraft); },
                 })
               ),
               h(
@@ -1210,8 +1238,9 @@ window.__ModuleLoader__.load({
                 h("input", {
                   className: "dss-set-input",
                   placeholder: "deepseek-chat",
-                  value: model,
-                  onChange: function (e) { setPluginSetting("model", e.target.value); },
+                  value: modelDraft,
+                  onChange: function (e) { setModelDraft(e.target.value); },
+                  onBlur: function () { setPluginSetting("model", modelDraft); },
                 })
               ),
               h(
@@ -1221,8 +1250,9 @@ window.__ModuleLoader__.load({
                 h("input", {
                   className: "dss-set-input",
                   placeholder: "https://api.deepseek.com",
-                  value: endpoint,
-                  onChange: function (e) { setPluginSetting("endpoint", e.target.value); },
+                  value: endpointDraft,
+                  onChange: function (e) { setEndpointDraft(e.target.value); },
+                  onBlur: function () { setPluginSetting("endpoint", endpointDraft); },
                 })
               )
             )

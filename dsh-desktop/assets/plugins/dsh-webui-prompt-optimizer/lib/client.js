@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
 .webui-po-trigger:disabled{opacity:.5;cursor:default}
 .webui-po-busy{animation:webui-po-spin 1s linear infinite}
 @keyframes webui-po-spin{to{transform:rotate(360deg)}}
-.webui-po-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:20;width:max-content;min-width:236px;max-width:320px;padding:14px 16px;border:1px solid var(--dsw-alias-border-inverted);border-radius:14px;background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-po-slide-in 160ms cubic-bezier(.2,.8,.2,1)}
+.webui-po-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:5000;width:max-content;min-width:236px;max-width:320px;padding:14px 16px;border:1px solid var(--dsw-alias-border-inverted);border-radius:14px;background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-po-slide-in 160ms cubic-bezier(.2,.8,.2,1)}
 /* 透明桥接：覆盖卡片与图标之间的间隙，鼠标移动时命中卡片不中断 hover。 */
 .webui-po-panel::before{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px}
 @keyframes webui-po-slide-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
@@ -83,7 +83,7 @@ window.__ModuleLoader__.load({
  * important 覆盖玻璃模式 html[data-dsh-glass] 的 rise 强制 animation。 */
 .webui-po-panel-closing{animation:webui-po-slide-out 140ms cubic-bezier(.4,0,.6,1) forwards!important}
 @keyframes webui-po-slide-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(6px)}}
-.webui-po-panel-multi{position:fixed;left:0;right:0;top:0;bottom:0;margin:auto;width:800px;max-width:calc(100vw - 32px);height:fit-content;max-height:82vh;padding:20px 24px;overflow-y:auto;z-index:1000}
+.webui-po-panel-multi{position:fixed;left:0;right:0;top:0;bottom:0;margin:auto;width:800px;max-width:calc(100vw - 32px);height:fit-content;max-height:82vh;padding:20px 24px;overflow-y:auto;z-index:5000}
 .webui-po-multi-body{display:flex;flex-direction:column;gap:14px;min-width:0}
 .webui-po-source{margin-top:2px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
 .webui-po-source-label{font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-secondary);margin-bottom:6px}

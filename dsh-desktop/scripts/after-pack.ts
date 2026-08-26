@@ -187,9 +187,29 @@ function trimLongPathFiles(appOutDir: string): void {
         } else if (e.name === 'browser' && /@opentelemetry[\\/]+[^\\/]+[\\/]build[\\/]+(esnext|src)[\\/]detectors[\\/]platform$/.test(dir)) {
           // browser 平台遥测探测器在纯 node 下永不加载
           kill.push(p);
-        } else if (depth < 12) {
-          collect(p, depth + 1);
+} else if (e.name === 'build' && dir.endsWith(path.join('node-pty')) && fs.existsSync(path.join(p, 'Release', 'pty.node'))) {
+        // issue #206：node-pty build/Release 若为构建机残留（旧签名），
+        // 会被 loadNativeModule 优先于 prebuilds 加载 → 终端 resize 即崩。
+        // 与 prebuilds 内容不一致时整目录剔除，强制走随包预编译产物。
+        const prebuilt = path.join(dir, 'prebuilds', process.platform + '-' + process.arch, 'pty.node');
+        if (!fs.existsSync(prebuilt)) {
+          console.log(`afterPack: node-pty 无 ${process.platform}-${process.arch} prebuilds，保留 build/ 兜底`);
+        } else {
+          try {
+            const a = fs.readFileSync(path.join(p, 'Release', 'pty.node'));
+            const b = fs.readFileSync(prebuilt);
+            if (a.equals(b)) {
+              console.log('afterPack: node-pty build/Release 与 prebuilds 一致，保留');
+            } else {
+              kill.push(p);
+            }
+          } catch {
+            kill.push(p);
+          }
         }
+      } else if (depth < 12) {
+        collect(p, depth + 1);
+      }
       }
     }
   };

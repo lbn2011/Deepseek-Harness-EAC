@@ -5,7 +5,7 @@ import {
   registerAutomaticCompaction,
 } from '../assets/plugins/dsh-compact/lib/engine.js'
 
-function harness(policy = {}) {
+function harness(policy = {}, cfg = {}) {
   const handlers = new Map()
   const logs = []
   const ctx = {
@@ -31,7 +31,7 @@ function harness(policy = {}) {
       return null
     },
   }
-  const dispose = registerAutomaticCompaction(ctx, engine)
+  const dispose = registerAutomaticCompaction(ctx, engine, cfg)
   return { calls, dispose, engine, handlers, logs }
 }
 
@@ -91,39 +91,97 @@ test('dsh-compact engine: max-tokens respects maxOverflowRetries=0 (no retry)', 
   t.dispose()
 })
 
-// #54 主路径：真实持久化信号是 turn/end 的 data.reason.kind（官方
-// 「已达到输出 token 上限」提示读同一字段）。用户发「继续」开启新 turn，
-// pre-step 必须先压缩再放行请求。
-test('dsh-compact engine: turn/end max-tokens forces compaction on next pre-step', async () => {
+// 截断不再强制保留 0 的全量压缩：截断≠上下文满（#54 时代的 pre-step 会在
+// 截断后的首步先用 context-overflow 把整段历史换成一个摘要，频繁截断时每轮
+// 都烧 → 摘要连摘要、质量劣化）。压缩与否完全交给 pressure 阈值决定。
+test('dsh-compact engine: output truncation alone never forces compaction', async () => {
   const t = harness()
   const agent = fakeAgent()
-  const session = agent.session
-  // 真实事件形状（见 dsh-goal-round-driver / dsh-client-ui-conversation）
-  t.handlers.get('session/event')(session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
+  t.handlers.get('session/event')(agent.session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
   const triggers = []
   t.engine.compactIfNeeded = async (a, trigger) => { triggers.push(trigger); return null }
   await t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => {})
-  assert.deepEqual(triggers, ['context-overflow', 'pressure'],
-    'should force context-overflow compaction first, then normal pressure check')
+  assert.deepEqual(triggers, ['pressure'],
+    'below-threshold run only attempts pressure, never the context-overflow forced path')
+  assert.equal(t.logs.some(([, message]) => message.includes('step pressure')), false,
+    'null result → no compaction committed')
   t.dispose()
 })
 
-test('dsh-compact engine: forced output-overflow compaction fires only once per truncation', async () => {
+test('dsh-compact engine: truncation with real pressure compacts once via the pressure path', async () => {
   const t = harness()
   const agent = fakeAgent()
-  const session = agent.session
-  t.handlers.get('session/event')(session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
+  t.handlers.get('session/event')(agent.session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
   const triggers = []
-  t.engine.compactIfNeeded = async (a, trigger) => { triggers.push(trigger); return null }
-  const runPreStep = () => t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => {})
-  await runPreStep()
-  await runPreStep()
-  assert.equal(triggers.filter((x) => x === 'context-overflow').length, 1,
-    'flag must be consumed so later steps do not re-force')
+  t.engine.compactIfNeeded = async (a, trigger) => {
+    triggers.push(trigger)
+    agent.session.surface.replaceGeneration += 1
+    return { shadowedSeqs: [1], shadowedRange: { start: 1, end: 1 }, shadowedTokenCount: 10 }
+  }
+  await t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => {})
+  assert.deepEqual(triggers, ['pressure'], 'compaction runs through the threshold path, never retain-0')
+  assert.equal(t.logs.some(([, message]) => message.includes('step pressure')), true)
   t.dispose()
 })
 
-test('dsh-compact engine: normal turn end does not force extra compaction', async () => {
+test('dsh-compact engine: cooldown suppresses immediate re-compaction on the same surface', async () => {
+  let fakeNow = 0
+  const t = harness({}, { now: () => fakeNow, minGapMs: 15_000 })
+  const agent = fakeAgent()
+  let calls = 0
+  t.engine.compactIfNeeded = async () => {
+    calls += 1
+    agent.session.surface.replaceGeneration += 1
+    return { shadowedSeqs: [1], shadowedRange: { start: 1, end: 1 }, shadowedTokenCount: 10 }
+  }
+  const runPreStep = () => t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => {})
+  await runPreStep()
+  assert.equal(calls, 1)
+  await runPreStep()
+  assert.equal(calls, 1, 'same generation within the gap must not compact again')
+  t.dispose()
+})
+
+test('dsh-compact engine: a new assistant generation past the gap allows compaction again', async () => {
+  let fakeNow = 0
+  const t = harness({}, { now: () => fakeNow, minGapMs: 15_000 })
+  const agent = fakeAgent()
+  let calls = 0
+  t.engine.compactIfNeeded = async () => {
+    calls += 1
+    agent.session.surface.replaceGeneration += 1
+    return { shadowedSeqs: [1], shadowedRange: { start: 1, end: 1 }, shadowedTokenCount: 10 }
+  }
+  const runPreStep = () => t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => {})
+  await runPreStep()
+  assert.equal(calls, 1)
+  agent.session.surface.replaceGeneration += 1 // 新一轮输出落盘
+  fakeNow += 16_000
+  await runPreStep()
+  assert.equal(calls, 2, 'new generation after the gap is pressure-checked again')
+  t.dispose()
+})
+
+test('dsh-compact engine: real overflow recovery bypasses the auto cooldown', async () => {
+  let fakeNow = 0
+  const t = harness({}, { now: () => fakeNow, minGapMs: 15_000 })
+  const agent = fakeAgent()
+  t.engine.compactIfNeeded = async () => {
+    agent.session.surface.replaceGeneration += 1
+    return { shadowedSeqs: [1], shadowedRange: { start: 1, end: 1 }, shadowedTokenCount: 10 }
+  }
+  await t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => {})
+  const result = await t.handlers.get('agent/request-error')({
+    agent,
+    failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE },
+    signal: new AbortController().signal,
+  }, () => {})
+  assert.deepEqual(result, { kind: 'retry' },
+    'context overflow must compact-and-retry even right after an auto compaction')
+  t.dispose()
+})
+
+test('dsh-compact engine: normal turn end still pressure-checks without any extra trigger', async () => {
   const t = harness()
   const agent = fakeAgent()
   const session = agent.session
@@ -136,18 +194,14 @@ test('dsh-compact engine: normal turn end does not force extra compaction', asyn
   t.dispose()
 })
 
-test('dsh-compact engine: forced compaction failure never aborts the user turn', async () => {
+test('dsh-compact engine: pre-step compaction failure never aborts the user turn', async () => {
   const t = harness()
   const agent = fakeAgent()
-  const session = agent.session
-  t.handlers.get('session/event')(session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
+  t.handlers.get('session/event')(agent.session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
   let nextCalls = 0
-  t.engine.compactIfNeeded = async (a, trigger) => {
-    if (trigger === 'context-overflow') throw new Error('summary failed')
-    return null
-  }
+  t.engine.compactIfNeeded = async () => { throw new Error('summary failed') }
   await t.handlers.get('agent/pre-step')({ agent, signal: new AbortController().signal }, () => { nextCalls += 1 })
   assert.equal(nextCalls, 1)
-  assert.match(t.logs.find(([level]) => level === 'warn')?.[1] ?? '', /output overflow/)
+  assert.match(t.logs.find(([level]) => level === 'warn')?.[1] ?? '', /continuing the turn/)
   t.dispose()
 })

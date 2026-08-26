@@ -399,19 +399,32 @@ window.__ModuleLoader__.load({
         var name = String(saveName || "").trim();
         if (!name || braces) return;
         setBusy("card");
-        remote().then(function (svc) { return svc.saveCard(name, draft); }).then(function () {
-          setBusy(null);
-          setSaveName("");
-          reloadCards();
-        }).catch(function () { setBusy(null); });
+        remote().then(function (svc) { return svc.saveCard(name, draft); }).then(function (res) {
+          // typert 远程统一 { ok, value } 包装；host 的 saveCard 失败（如
+          // 卡片名含非法字符返回 bad card name）也会正常 resolve —— 不
+          // 检查 ok 会造成「点了没反应，卡片根本没存上」（issue #89）。
+          var d2 = res && res.ok ? res.value : null;
+          if (d2 && d2.ok) {
+            setBusy(null);
+            setSaveName("");
+            reloadCards();
+          } else {
+            setBusy("error:" + ((d2 && d2.error) || (res && res.error && res.error.message) || "save failed"));
+          }
+        }).catch(function (e) { setBusy("error:" + String(e && e.message || e)); });
       }
 
       function onDeleteCard(name) {
         setBusy("card-del:" + name);
-        remote().then(function (svc) { return svc.deleteCard(name); }).then(function () {
-          setBusy(null);
-          reloadCards();
-        }).catch(function () { setBusy(null); });
+        remote().then(function (svc) { return svc.deleteCard(name); }).then(function (res) {
+          var d2 = res && res.ok ? res.value : null;
+          if (d2 && d2.ok) {
+            setBusy(null);
+            reloadCards();
+          } else {
+            setBusy("error:" + ((d2 && d2.error) || (res && res.error && res.error.message) || "delete failed"));
+          }
+        }).catch(function (e) { setBusy("error:" + String(e && e.message || e)); });
       }
 
       if (data.status === "loading") return h("p", { className: "__es_status" }, "…");

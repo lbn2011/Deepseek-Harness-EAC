@@ -1535,7 +1535,41 @@ fn main() {
 
                             serve_ws(st, app_handle).await;
                         }
-                        Err(e) => eprintln!("[shell] sidecar spawn failed: {}", e),
+                        Err(e) => {
+                            // issue #210：resources 装配失败 / node sidecar 缺失时，
+                            // 旧实现只 eprintln!，用户窗口永久停在 /loading 白屏、
+                            // 无任何诊断入口。这里与 boot.start 失败同样处理：
+                            // 建主窗并导航到 /died 页（参数带失败原因），提示重装。
+                            eprintln!("[shell] sidecar spawn failed: {}", e);
+                            let msg = e.to_string().replace('"', "'").replace('\n', " ");
+                            let app_died = app_handle.clone();
+                            let app_died_inner = app_died.clone();
+                            let _ = app_died.run_on_main_thread(move || {
+                                use tauri::Manager;
+                                let app_died = app_died_inner;
+                                let died = format!(
+                                    "http://127.0.0.1:{}/died?code=sidecar-spawn&log={}",
+                                    WS_PORT, msg
+                                );
+                                if let Ok(url) = tauri::Url::parse(&died) {
+                                    if app_died.get_webview_window("main").is_none() {
+                                        let _ = tauri::webview::WebviewWindowBuilder::new(
+                                            &app_died,
+                                            "main",
+                                            tauri::WebviewUrl::External(url),
+                                        )
+                                        .title("Deepseek Harness EAC")
+                                        .inner_size(1400.0, 900.0)
+                                        .min_inner_size(960.0, 640.0)
+                                        .decorations(false)
+                                        .build();
+                                    } else if let Some(win) = app_died.get_webview_window("main") {
+                                        let _ = win.show();
+                                        let _ = win.navigate(url);
+                                    }
+                                }
+                            });
+                        }
                     }
                 });
             });

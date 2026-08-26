@@ -260,7 +260,14 @@ window.__ModuleLoader__.load({
           fetch('/picturereader/models')
             .then(function (res) { return res.ok ? res.json() : []; })
             .then(function (data) {
-              if (alive && Array.isArray(data)) setAvailable(data);
+              if (!alive || !Array.isArray(data)) return;
+              // 模型列表未变化时不 setState：5s 轮询原本每次都用新数组
+              // 引用触发重渲染，设置页展开「视觉模型」组时每 5s 重置一次
+              // 列表滚动位置/悬停状态（issue #220 观感）。
+              setAvailable(function (prev) {
+                if (prev && JSON.stringify(prev) === JSON.stringify(data)) return prev;
+                return data;
+              });
             })
             .catch(function () {});
         }

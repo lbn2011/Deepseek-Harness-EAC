@@ -76,7 +76,13 @@ function cardsDir() {
 	return join(homeDir(), "persona-cards");
 }
 
-const CARD_NAME_RE = /^[\w\-. \u4e00-\u9fa5]{1,40}$/;
+/** 卡片名清洗：替换掉不能用于文件名的字符（中文标点如 ：（）等均保留），
+ *  超长截断到 40 —— 保存/删除都先用同一清洗函数，名字再怪也不会「点保存
+ *  没反应」（issue #89：旧实现用白名单正则直接拒绝，客户端又不检查 ok，失败
+ *  表现为无任何效果）。 */
+function cleanCardName(name) {
+	return String(name ?? "").trim().replace(/[\\/:*?"<>|\r\n]/g, "_").slice(0, 40);
+}
 
 class EasySetupGateway extends TypertRemoteService {
 	static inject = ["typert"];
@@ -160,12 +166,12 @@ class EasySetupGateway extends TypertRemoteService {
 
 	/** Save (create/overwrite) a named card in the library. */
 	saveCard(name, content) {
-		const n = String(name ?? "").trim();
-		if (!CARD_NAME_RE.test(n)) return { ok: false, error: "bad card name" };
+		const n = cleanCardName(name);
+		if (!n) return { ok: false, error: "card name is empty" };
 		const text = String(content ?? "");
 		try {
 			mkdirSync(cardsDir(), { recursive: true });
-			const file = join(cardsDir(), n.replace(/[\\/:*?"<>|]/g, "_") + ".md");
+			const file = join(cardsDir(), n + ".md");
 			writeFileSync(file, text, "utf8");
 			return { ok: true, file };
 		} catch (error) {
@@ -175,10 +181,10 @@ class EasySetupGateway extends TypertRemoteService {
 
 	/** Remove a named card from the library (never touches the live soul.md). */
 	deleteCard(name) {
-		const n = String(name ?? "").trim();
-		if (!CARD_NAME_RE.test(n)) return { ok: false, error: "bad card name" };
+		const n = cleanCardName(name);
+		if (!n) return { ok: false, error: "card name is empty" };
 		try {
-			const file = join(cardsDir(), n.replace(/[\\/:*?"<>|]/g, "_") + ".md");
+			const file = join(cardsDir(), n + ".md");
 			if (!existsSync(file)) return { ok: false, error: "not found" };
 			rmSync(file);
 			return { ok: true };

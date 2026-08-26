@@ -447,6 +447,11 @@ export async function applyUpdate(
       const args = [
         'install', '--prefix', staging, PKG + '@' + version,
         '--save-exact', '--omit=dev', '--no-audit', '--no-fund', '--no-update-notifier',
+        // 绝不执行第三方构建脚本（与 plugin-updater 的安装语义对齐）：
+        // node-pty 等原生依赖的 prebuilds/ 已随包分发，本地 node-gyp 构建
+        // 在无 VS Build Tools / 网络受限环境会长时间静默（用户侧表现为
+        // 「卡 125/126」，换镜像源也无解），平台错配应走预编译产物而非现场编译。
+        '--ignore-scripts',
         '--loglevel=info',
       ];
       if (registry) args.push('--registry=' + registry);

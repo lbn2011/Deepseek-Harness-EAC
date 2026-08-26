@@ -198,7 +198,7 @@ test('installed failure paths keep artifacts and relaunch the old executable', (
   assert.doesNotMatch(actionFailure, /del "%~f0"/i);
 });
 
-test('installed success paths remove Setup and both helper scripts', () => {
+test('installed success paths remove Setup, relaunch the new app, and both helper scripts', () => {
   const helper = buildInstalledApplyScript().join('\n');
   const actionLines = buildApplyScript({
     newExe: 'C:\\updates\\setup.exe',
@@ -213,6 +213,10 @@ test('installed success paths remove Setup and both helper scripts', () => {
   assert.match(helper, /Remove-Item -LiteralPath \$ScriptPath/);
   assert.match(actionSuccess, /del "%SETUP%"/i);
   assert.match(actionSuccess, /del "%~f0"/i);
+  // issue #167：/S 静默安装成功后必须主动拉起新版本（旧实现只删 Setup +
+  // 自删批处理，finish 页不渲染导致永不自动重开）——与失败路径拉起旧版对称。
+  assert.match(actionSuccess, /start "" "%INST%\\dsh-eac-shell\.exe"/i);
+  assert.match(actionSuccess, /start "" "%INST%\\Deepseek Harness EAC\.exe"/i);
 });
 
 test('installed PowerShell arguments preserve paths and request a hidden non-interactive window', () => {
