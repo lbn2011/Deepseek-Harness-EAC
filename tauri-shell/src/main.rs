@@ -62,28 +62,12 @@ fn main_initialization_script() -> String {
 }
 
 trait Platform {
-    fn resource_root() -> std::path::PathBuf;
     fn configure_command(command: &mut Command);
 }
 
 struct CurrentPlatform;
 
 impl Platform for CurrentPlatform {
-    fn resource_root() -> std::path::PathBuf {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent().map(|p| p.to_path_buf()) {
-                if dir.join("sidecar").join("server.js").exists() {
-                    return dir;
-                }
-                let res = dir.join("resources");
-                if res.join("sidecar").join("server.js").exists() {
-                    return res;
-                }
-            }
-        }
-        std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")))
-    }
     fn configure_command(command: &mut Command) {
         #[cfg(windows)]
         {
@@ -179,8 +163,6 @@ fn is_allowed_main_navigation(target: &tauri::Url) -> bool {
 
 /// bridge-test 冒烟断言项（方法名 / 参数 / 结果检查闭包）。
 type BridgeCheck = (&'static str, Value, Box<dyn Fn(&Value) -> bool>);
-
-/// 解析 Node 运行时：优先内置 vendor/node（与 legacy-shell 壳共用一份），回退 PATH。
 
 // ---------------------------------------------------------------------------
 // 主窗尺寸/位置记忆（issue：副屏宽度不够显示不全）。
@@ -1959,23 +1941,19 @@ fn main() {
                     }
                 }
                 // 最大化状态变化 → win.maximized 通知（桥 onMaximizeChange 消费）。
-                tauri::WindowEvent::Resized(_) => {
-                    if window.label() == "main" {
-                        let m = window.is_maximized().unwrap_or(false);
-                        if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
-                            let _ = shell_notify().send(serde_json::json!({
-                                "method": "win.maximized",
-                                "params": { "maximized": m }
-                            }));
-                        }
-                        throttle_save_window_state(window.app_handle());
+                tauri::WindowEvent::Resized(_) if window.label() == "main" => {
+                    let m = window.is_maximized().unwrap_or(false);
+                    if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
+                        let _ = shell_notify().send(serde_json::json!({
+                            "method": "win.maximized",
+                            "params": { "maximized": m }
+                        }));
                     }
+                    throttle_save_window_state(window.app_handle());
                 }
                 // 拖移后保存位置（节流写盘，最终态由关闭/退出兜底）。
-                tauri::WindowEvent::Moved(_) => {
-                    if window.label() == "main" {
-                        throttle_save_window_state(window.app_handle());
-                    }
+                tauri::WindowEvent::Moved(_) if window.label() == "main" => {
+                    throttle_save_window_state(window.app_handle());
                 }
                 _ => {}
             }
