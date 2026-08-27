@@ -104,7 +104,8 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 30
           retry_on: error,timeout
-          command: npm test
+          # retry action 不继承 defaults.run.working-directory，需显式 cd
+          command: cd dsh-desktop && npm test
 
       - name: 构建 Rust 原生模块
         run: npm run build:native
