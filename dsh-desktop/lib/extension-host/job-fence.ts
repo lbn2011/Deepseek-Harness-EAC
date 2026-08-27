@@ -142,6 +142,7 @@ class JobFenceHandle implements FenceHandle {
       // Job 已回收（进程自退出触发）等场景：兜底 taskkill。
       await taskkillTree(this.pid);
     }
+    await reapChild(this.child);
     this.stdin.destroy();
     try {
       this.native.closeJob(this.jobId);
@@ -222,6 +223,18 @@ class JobFence implements Fence {
 // 降级实现：spawn + taskkill /T /F
 // ---------------------------------------------------------------------------
 
+/** 等待子进程退出并回收（reap），避免 SIGKILL 后遗留 zombie——
+ *  zombie 仍在进程表，process.kill(pid, 0) 对 zombie 不抛错，
+ *  导致 kill 后的存活断言误判「还活着」。有界等待，不阻塞。 */
+function reapChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null || child.killed) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(), 3000);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+    child.once('error', () => { clearTimeout(timer); resolve(); });
+  });
+}
+
 function taskkillTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
@@ -269,6 +282,7 @@ class FallbackFenceHandle implements FenceHandle {
     if (this.killed) return;
     this.killed = true;
     await taskkillTree(this.pid);
+    await reapChild(this.child);
     this.stdin.destroy();
   }
 

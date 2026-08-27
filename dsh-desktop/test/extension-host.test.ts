@@ -103,17 +103,19 @@ test('RpcPeer：请求超时拒绝 + close 拒绝在途请求', async () => {
 // job-fence：native 探测 / 降级 / 围栏 spawn
 // ---------------------------------------------------------------------------
 
-test('job-fence：native 模块可加载且导出面完整（本机为 Windows 构建路径）', () => {
+test('job-fence：native 模块可加载且导出面完整（build:native 产物）', () => {
   const native = jobFence.loadNativeSupervisor();
-  if (process.platform === 'win32') {
-    assert.ok(native, 'Windows 上 index.node 必须可用（build:native 产物）');
-    for (const fn of ['createJob', 'assignToJob', 'terminateJob', 'jobAlive', 'closeJob', 'sha256Stream']) {
-      assert.equal(typeof native[fn], 'function', `导出缺 ${fn}`);
-    }
-  } else {
-    assert.equal(native, null, '非 Windows 应降级');
-    assert.equal(jobFence.fenceMode(), 'process-group');
+  // index.node 为平台相关构建产物（不入库）：CI 在 Node 测试前执行
+  // build:native，本机亦应先 build:native 再跑测试。
+  assert.ok(native, 'index.node 必须可用（先跑 npm run build:native）');
+  for (const fn of ['createJob', 'assignToJob', 'terminateJob', 'jobAlive', 'closeJob', 'sha256Stream']) {
+    assert.equal(typeof native[fn], 'function', `导出缺 ${fn}`);
   }
+  assert.equal(
+    jobFence.fenceMode(),
+    process.platform === 'win32' ? 'win32-job' : 'unix-process-group',
+    'native 可用时围栏模式应为平台原生档',
+  );
 });
 
 test('job-fence：fenceMode 与 createFence 模式一致；stdio 管道 + onExit 回调', async () => {
@@ -158,7 +160,7 @@ test('job-fence：kill() 强杀长驻进程（树回收）', async () => {
 
 test('job-fence：POSIX process-group 回收孙进程', { skip: process.platform === 'win32' }, async () => {
   const fence = jobFence.createFence();
-  assert.equal(fence.mode, 'process-group');
+  assert.equal(fence.mode, 'unix-process-group');
   const script = [
     'const {spawn}=require("node:child_process")',
     'const c=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"})',
