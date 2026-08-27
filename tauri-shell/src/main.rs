@@ -96,7 +96,6 @@ impl Platform for CurrentPlatform {
 fn resource_root() -> std::path::PathBuf {
     CurrentPlatform::resource_root()
 }
-}
 
 fn sidecar_script() -> std::path::PathBuf {
     resource_root().join("sidecar").join("server.js")
