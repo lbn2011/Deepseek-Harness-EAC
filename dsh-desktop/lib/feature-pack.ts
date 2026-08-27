@@ -5,7 +5,7 @@
 //
 // 职责：清单解析与校验、内核 semver 范围匹配（matchSemverRange）、注册表 CRUD、
 // 内核兼容检查与启动扫描、安装/卸载/更新/导出/回滚编排、op 状态文件与排队
-// resume。纯 Node 实现，不依赖 Electron/Tauri；由 sidecar（启动扫描、排队消费）
+// resume。纯 Node 实现，不依赖任何壳层；由 sidecar（启动扫描、排队消费）
 // 与 scripts/feature-pack-cli.ts 共同使用。
 //
 // 边界（红线）：

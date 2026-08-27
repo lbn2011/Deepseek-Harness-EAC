@@ -87,6 +87,12 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   // 「粘贴即用/图片桥自动分析」入口语义重叠，避免粘贴图片时重复注入。
   { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
   { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer', dir: 'dsh-webui-prompt-optimizer' },
+  // 上游同步（671e87ec：#237 功能包 / #238 市场 0.3.0 / macOS 管线配套插件）。
+  { id: 'dsh-agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams' },
+  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles', dir: 'dsh-feature-toggles' },
+  { id: 'dsh-phone', name: 'dsh-phone', dir: 'dsh-phone' },
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt' },
+  { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget' },
 ];
 
 /** 曾内置、现已从内置清单移除的插件（vnext 同步自 main v4.5）。 */

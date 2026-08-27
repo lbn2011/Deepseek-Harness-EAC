@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const fp = require(join(root, 'lib', 'desktop', 'feature-pack.js'));
+const fp = require(join(root, 'lib', 'feature-pack.js'));
 const archiver = require('archiver') as (format: string, o?: Record<string, unknown>) => ArchiverLike;
 
 interface ArchiverLike {
