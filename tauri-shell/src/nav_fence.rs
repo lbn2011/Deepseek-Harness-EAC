@@ -20,8 +20,12 @@ pub fn is_allowed_navigation(target: &tauri::Url, current_url: Option<&str>, ws_
             }
         }
     }
-    matches!(target.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
-        && target.port_or_known_default() == Some(ws_port)
+    // 回环主机判定：用类型化的 Host 匹配（IPv4/IPv6 回环地址），而非字符串比较——
+    // url crate 的 host_str() 对 IPv6 返回带方括号的 "[::1]"，裸字符串 "::1" 永远不匹配。
+    let loopback = matches!(target.host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback())
+        || matches!(target.host(), Some(url::Host::Ipv6(ip)) if ip.is_loopback())
+        || matches!(target.host_str(), Some("localhost"));
+    loopback && target.port_or_known_default() == Some(ws_port)
 }
 
 #[cfg(test)]
