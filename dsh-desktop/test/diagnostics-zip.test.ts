@@ -97,20 +97,26 @@ function setupFakeHome() {
   return { fake, logsDir, userData, dshHome, profileDir, backupDir };
 }
 
-// Extract zip via PowerShell + .NET ZipFile (Windows built-in, no extra module)
+// Extract zip：Windows 用 PowerShell + .NET ZipFile（内置无第三方依赖）；
+// Linux/macOS 用系统 unzip（GitHub runner 自带）。
 function extractZip(zipPath, outDir) {
   fs.mkdirSync(outDir, { recursive: true });
-  const ps = [
-    `$ErrorActionPreference = 'Stop'`,
-    `Add-Type -AssemblyName System.IO.Compression.FileSystem`,
-    `$zip = '${zipPath.replace(/'/g, "''")}'`,
-    `$out = '${outDir.replace(/'/g, "''")}'`,
-    `if (Test-Path $out) { Get-ChildItem $out -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue }`,
-    `New-Item -ItemType Directory -Force -Path $out | Out-Null`,
-    `[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)`,
-    `exit 0`,
-  ].join('; ');
-  try { execSync(`powershell.exe -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\"')}"`, { stdio: 'pipe', timeout: 60000 }); }
+  if (process.platform === 'win32') {
+    const ps = [
+      `$ErrorActionPreference = 'Stop'`,
+      `Add-Type -AssemblyName System.IO.Compression.FileSystem`,
+      `$zip = '${zipPath.replace(/'/g, "''")}'`,
+      `$out = '${outDir.replace(/'/g, "''")}'`,
+      `if (Test-Path $out) { Get-ChildItem $out -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue }`,
+      `New-Item -ItemType Directory -Force -Path $out | Out-Null`,
+      `[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)`,
+      `exit 0`,
+    ].join('; ');
+    try { execSync(`powershell.exe -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\"')}"`, { stdio: 'pipe', timeout: 60000 }); }
+    catch (e) { throw new Error('Zip Extract failed: ' + (e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + e.message); }
+    return;
+  }
+  try { execSync(`unzip -o -q '${zipPath}' -d '${outDir}'`, { stdio: 'pipe', timeout: 60000 }); }
   catch (e) { throw new Error('Zip Extract failed: ' + (e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + e.message); }
 }
 

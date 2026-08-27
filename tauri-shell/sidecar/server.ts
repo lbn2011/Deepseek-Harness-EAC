@@ -38,6 +38,7 @@ import * as extHost from '../../dsh-desktop/lib/extension-host/manager.js';
 import * as bridgeServer from '../../dsh-desktop/lib/extension-host/bridge-server.js';
 import { registerIpc } from '../../dsh-desktop/lib/ipc/index.js';
 import { setDefaultIpcSurface } from '../../dsh-desktop/lib/ipc/transport.js';
+import { createDesktopPlatform } from '../../dsh-desktop/lib/platform.js';
 import { createSidecarIpcSurface } from './ipc-surface.js';
 import * as rescueIntegration from './rescue-integration.js';
 
@@ -61,6 +62,10 @@ const appDataDir = path.join(os.homedir(), 'AppData', 'Roaming');
 const userDataDir = path.join(appDataDir, APP_NAME);
 const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 const log = (tag: string, msg: string): void => say('[' + tag + '] ' + msg);
+
+// 桌面平台能力（上游 #219 移植）：Linux/macOS 用 XDG 布局 + 外链剪贴板探测，
+// Windows 用 APPDATA 布局；shell.info 据此暴露 userDataDir / capabilities。
+const desktopPlatform = createDesktopPlatform();
 
 let pkgVersion = '0.0.0';
 try {
@@ -375,6 +380,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     platform: process.platform,
     pid: process.pid,
     dshHome,
+    userDataDir: desktopPlatform.userDataDir(),
+    capabilities: desktopPlatform.capabilities(),
     version: pkgVersion,
     modules: MOUNTED,
     balance: balanceCache,

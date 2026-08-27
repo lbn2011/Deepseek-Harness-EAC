@@ -97,18 +97,19 @@ jobs:
           mkdir -p ../tauri-shell/staged-resources/sidecar ../tauri-shell/staged-resources/dsh-desktop
           cargo test --manifest-path ../tauri-shell/Cargo.toml --no-fail-fast
 
+      - name: 构建 Rust 原生模块（Node 测试前生成平台原生 index.node）
+        run: npm run build:native
+
       - name: Node 测试（超时自动重试，最多 3 次）
         uses: nick-fields/retry@v3
         with:
+          shell: bash
           timeout_minutes: 15
           max_attempts: 3
           retry_wait_seconds: 30
           retry_on: error,timeout
           # retry action 不继承 defaults.run.working-directory，需显式 cd
           command: cd dsh-desktop && npm test
-
-      - name: 构建 Rust 原生模块
-        run: npm run build:native
 
       - name: 构建 Tauri
         run: npm run tauri:build

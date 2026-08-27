@@ -9,6 +9,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import {
   GUARD_FILES, MAX_SNAPSHOTS, patchRowIds, readJson, writeJson,
   type GuardCtx, type SnapshotMeta,
@@ -29,7 +30,11 @@ export function createSnapshotDomain(ctx: GuardCtx): SnapshotDomain {
     try {
       const dir = ctx.profileDir();
       if (!fs.existsSync(dir)) return null;
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
+      // 时间戳 + 随机后缀：快速连续快照（同毫秒）不再互相覆盖——此前
+      // 纯毫秒时间戳碰撞时 mkdirSync(recursive) 静默覆写同一目录，导致
+      // 快照计数失真（prune 保留数错误）且 markGood 的引导快照可能被
+      // 后续同毫秒快照覆盖（回滚失效）。
+      const stamp = `${new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '')}-${crypto.randomBytes(3).toString('hex')}`;
       const dest = path.join(ctx.rollbacksDir(), stamp);
       fs.mkdirSync(dest, { recursive: true });
       const files: string[] = [];

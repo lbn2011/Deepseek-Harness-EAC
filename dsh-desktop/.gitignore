@@ -15,10 +15,13 @@ data/
 /preload-lib/**/*.js
 /scripts/*.js
 !scripts/koffi-preflight.cjs
-# Rust 原生模块：cargo target 不入库；index.node 为预编译产物（367KB / 快照
-# 引擎 ~200KB，predist 经 scripts/build-native.js copy 校验后随安装包分发）
+# Rust 原生模块：cargo target 不入库；index.node 为平台相关构建产物，
+# 不入库（Windows 编译的 .node 在 Linux/macOS 加载即 ERR_DLOPEN_FAILED，
+# CI 各平台由 build:native 在测试前自行生成）
 /native/supervisor/target/
 /native/snapshot/target/
+/native/supervisor/index.node
+/native/snapshot/index.node
 # 临时调试 / 备份产物不入库
 debug-session-dump.cjs
 e2e-base.txt
