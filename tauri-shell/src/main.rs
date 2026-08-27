@@ -42,6 +42,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as ABufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use std::process::Stdio;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AMutex};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -85,7 +87,6 @@ impl Platform for CurrentPlatform {
     fn configure_command(command: &mut Command) {
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000);
         }
         #[cfg(unix)]
@@ -137,6 +138,9 @@ fn is_allowed_main_navigation(target: &tauri::Url) -> bool {
     nav_fence::is_allowed_navigation(target, current_web_url().as_deref(), WS_PORT)
 }
 
+/// bridge-test 冒烟断言项（方法名 / 参数 / 结果检查闭包）。
+type BridgeCheck = (&'static str, Value, Box<dyn Fn(&Value) -> bool>);
+
 /// 解析 Node 运行时：优先内置 vendor/node（与 legacy-shell 壳共用一份），回退 PATH。
 fn resolve_node() -> String {
     if let Ok(p) = std::env::var("DSH_NODE_EXE") {
@@ -157,9 +161,12 @@ struct Sidecar {
     child: Child,
     writer: Arc<AMutex<ChildStdin>>,
     next_id: Arc<AtomicU64>,
-    pending: Arc<AMutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
+    pending: PendingRpc,
     notify_tx: broadcast::Sender<Value>,
 }
+
+/// 进行中的 RPC 请求表（id → 应答通道）。
+type PendingRpc = Arc<AMutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
 
 impl Sidecar {
     async fn spawn() -> Result<Self, String> {
@@ -446,9 +453,9 @@ async fn handle_shell_method(
                     {
                         if let Some(w) = app.get_webview_window("main") {
                             if w.is_devtools_open() {
-                                let _ = w.close_devtools();
+                                w.close_devtools();
                             } else {
-                                let _ = w.open_devtools();
+                                w.open_devtools();
                             }
                         }
                     }
@@ -657,7 +664,6 @@ async fn run_clipboard_command(program: &str, args: &[&str], text: &str) -> Resu
         .kill_on_drop(true);
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         command.as_std_mut().creation_flags(0x0800_0000);
     }
     let mut child = command.spawn().map_err(|error| format!("{} spawn failed: {}", program, error))?;
@@ -695,7 +701,7 @@ async fn write_clipboard_text(text: &str) -> Result<(), String> {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             }
         }
-        return Err(last_error);
+        Err(last_error)
     }
     #[cfg(target_os = "linux")]
     {
@@ -712,10 +718,10 @@ async fn write_clipboard_text(text: &str) -> Result<(), String> {
                 Err(error) => failures.push(error),
             }
         }
-        return Err(format!(
+        Err(format!(
             "Linux clipboard requires wl-copy, xclip, or xsel ({})",
             failures.join("; ")
-        ));
+        ))
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
@@ -851,7 +857,7 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
 
     let ws = tokio_tungstenite::accept_async(stream)
         .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     let (mut sink, mut source) = ws.split();
 
     // 单一写任务：回复与通知统一经 out_tx 出站（SplitSink 不可克隆）。
@@ -1221,7 +1227,7 @@ fn run_bridge_test() -> i32 {
                 return 1;
             }
         };
-        let checks: Vec<(&str, Value, Box<dyn Fn(&Value) -> bool>)> = vec![
+        let checks: Vec<BridgeCheck> = vec![
             ("ping", serde_json::json!({}), Box::new(|r: &Value| r.get("pong") == Some(&serde_json::json!(true)))),
             (
                 "shell.info",
@@ -1665,15 +1671,13 @@ fn main() {
                     }
                 }
                 // 最大化状态变化 → win.maximized 通知（桥 onMaximizeChange 消费）。
-                tauri::WindowEvent::Resized(_) => {
-                    if window.label() == "main" {
-                        let m = window.is_maximized().unwrap_or(false);
-                        if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
-                            let _ = shell_notify().send(serde_json::json!({
-                                "method": "win.maximized",
-                                "params": { "maximized": m }
-                            }));
-                        }
+                tauri::WindowEvent::Resized(_) if window.label() == "main" => {
+                    let m = window.is_maximized().unwrap_or(false);
+                    if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
+                        let _ = shell_notify().send(serde_json::json!({
+                            "method": "win.maximized",
+                            "params": { "maximized": m }
+                        }));
                     }
                 }
                 _ => {}
@@ -1689,7 +1693,7 @@ fn main() {
                     sidecar: Arc::new(AMutex::new(None)),
                 });
                 let st = BridgeState { sidecar: state.sidecar.clone() };
-                let _ = tauri::async_runtime::block_on(async move {
+                tauri::async_runtime::block_on(async move {
                     let sc = st.sidecar.lock().await.clone();
                     if let Some(sc) = sc {
                         let _ = tokio::time::timeout(
