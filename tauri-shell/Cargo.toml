@@ -18,6 +18,10 @@ futures-util = "0.3"
 http = "1"
 url = "2"
 
+# main.rs 的 devtools 菜单动作以该 feature 显式门禁（release 默认关闭）。
+[features]
+devtools = []
+
 [[bin]]
 name = "dsh-eac-shell"
 path = "src/main.rs"
