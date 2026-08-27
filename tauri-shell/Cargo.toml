@@ -22,6 +22,11 @@ url = "2"
 [features]
 devtools = []
 
+# 本 crate 级严格 lint：未知 cfg 条件（如未声明 feature）直接编译失败，
+# 避免 unexpected_cfgs 这类警告被忽视（CI cargo test 与 clippy 双门禁）。
+[lints.rust]
+unexpected_cfgs = "deny"
+
 [[bin]]
 name = "dsh-eac-shell"
 path = "src/main.rs"

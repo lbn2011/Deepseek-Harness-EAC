@@ -1708,3 +1708,93 @@ fn main() {
             }
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- sanitize_label：窗口标签字符集净化（tauri 仅允许字母数字与 -/:_）----
+    #[test]
+    fn sanitize_label_keeps_allowed_chars() {
+        assert_eq!(sanitize_label("abc123-/_:"), "abc123-/_:");
+    }
+
+    #[test]
+    fn sanitize_label_replaces_forbidden_chars() {
+        assert_eq!(sanitize_label("a b.c@d"), "a-b-c-d");
+    }
+
+    #[test]
+    fn sanitize_label_unicode_replaced() {
+        assert_eq!(sanitize_label("会话1"), "--1");
+    }
+
+    #[test]
+    fn sanitize_label_empty_falls_back_to_float() {
+        assert_eq!(sanitize_label(""), "float");
+        // 全非法字符净化后仍非空（"---"），按原语义不回退
+        assert_eq!(sanitize_label("!!!"), "---");
+    }
+
+    // ---- is_safe_external_url：外链纪律（仅 http/https，引号注入预检）----
+    #[test]
+    fn safe_url_allows_http_https() {
+        assert!(is_safe_external_url("http://example.com/"));
+        assert!(is_safe_external_url("https://example.com/path?a=1"));
+        assert!(is_safe_external_url("https://127.0.0.1:19873/"));
+    }
+
+    #[test]
+    fn safe_url_rejects_other_schemes() {
+        assert!(!is_safe_external_url("file:///etc/passwd"));
+        assert!(!is_safe_external_url("javascript:alert(1)"));
+        assert!(!is_safe_external_url("data:text/html,hi"));
+        assert!(!is_safe_external_url("ftp://example.com/"));
+        assert!(!is_safe_external_url("mailto:a@b.c"));
+    }
+
+    #[test]
+    fn safe_url_rejects_quote_injection() {
+        assert!(!is_safe_external_url("https://example.com/\";calc"));
+        assert!(!is_safe_external_url("http://x/\" onmouseover=\""));
+    }
+
+    #[test]
+    fn safe_url_rejects_malformed() {
+        assert!(!is_safe_external_url("not a url"));
+        assert!(!is_safe_external_url(""));
+    }
+
+    // ---- dsh_desktop_dir：统一正斜杠（sidecar 与 node 路径解析依赖）----
+    #[test]
+    fn dsh_desktop_dir_uses_forward_slashes() {
+        let dir = dsh_desktop_dir();
+        assert!(dir.ends_with("/dsh-desktop"), "unexpected: {dir}");
+        assert!(!dir.contains('\\'), "must not contain backslashes: {dir}");
+    }
+
+    // ---- resolve_node：DSH_NODE_EXE 显式覆盖优先 ----
+    #[test]
+    fn resolve_node_honors_env_override() {
+        std::env::set_var("DSH_NODE_EXE", "C:/fake/node.exe");
+        let resolved = resolve_node();
+        std::env::remove_var("DSH_NODE_EXE");
+        assert_eq!(resolved, "C:/fake/node.exe");
+    }
+
+    // ---- is_allowed_main_navigation：nav_fence + WS_PORT 集成（仅 None 路径，与
+    //      nav_fence 单测互补；current_web_url 为全局静态，测试并行不依赖它）----
+    #[test]
+    fn navigation_allows_loopback_on_ws_port() {
+        assert!(is_allowed_main_navigation(&tauri::Url::parse("http://127.0.0.1:19873/").unwrap()));
+        assert!(is_allowed_main_navigation(&tauri::Url::parse("http://localhost:19873/").unwrap()));
+        assert!(is_allowed_main_navigation(&tauri::Url::parse("http://[::1]:19873/").unwrap()));
+    }
+
+    #[test]
+    fn navigation_rejects_external() {
+        assert!(!is_allowed_main_navigation(&tauri::Url::parse("https://evil.example.com/").unwrap()));
+        assert!(!is_allowed_main_navigation(&tauri::Url::parse("http://localhost:9999/").unwrap()));
+        assert!(!is_allowed_main_navigation(&tauri::Url::parse("http://198.51.100.7:19873/").unwrap()));
+    }
+}
