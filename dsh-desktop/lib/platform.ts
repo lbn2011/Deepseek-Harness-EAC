@@ -36,6 +36,13 @@ export function pluginCapabilityDetails(platform: NodeJS.Platform = process.plat
       'dsh-dafeiyu': { status: 'supported', reason: 'Bundled Windows helper' },
     };
   }
+  if (platform === 'darwin') {
+    return {
+      'computer-user': { status: 'unavailable', reason: 'macOS v1.5 计划：CGEvent + TCC 授权' },
+      picturereader: { status: 'external-dependency', reason: 'OCR 需 Python (paddle/rapid)，v1.5 计划 Vision 后端' },
+      'dsh-dafeiyu': { status: 'unavailable', reason: '无 macOS helper 产物' },
+    };
+  }
   return {
     'computer-user': { status: 'unavailable', reason: 'Linux/Wayland has no transparent SendInput equivalent' },
     picturereader: { status: 'external-dependency', reason: 'OCR requires a separately installed Linux backend' },
@@ -93,6 +100,10 @@ export function createDesktopPlatform(options: DesktopPlatformOptions = {}): Des
       const configHome = env.XDG_CONFIG_HOME || path.posix.join(homeDir, '.config');
       return path.posix.join(configHome, 'deepseek-harness-eac');
     }
+    if (platform === 'darwin') {
+      // macOS 惯例：~/Library/Application Support/<app>（不经 XDG fallback）。
+      return path.posix.join(homeDir, 'Library', 'Application Support', 'deepseek-harness-eac');
+    }
     const configHome = env.XDG_CONFIG_HOME || path.join(homeDir, '.config');
     return path.join(configHome, 'deepseek-harness-eac');
   };
@@ -102,7 +113,9 @@ export function createDesktopPlatform(options: DesktopPlatformOptions = {}): Des
       ? 'supported'
       : platform === 'linux' && (commandExists('wl-copy') || commandExists('xclip') || commandExists('xsel'))
         ? 'supported'
-        : platform === 'linux' ? 'external-dependency' : 'unavailable',
+        : platform === 'darwin'
+          ? 'supported' // pbcopy/pbpaste 为 macOS 内置
+          : platform === 'linux' ? 'external-dependency' : 'unavailable',
     clientSelfUpdate: platform === 'win32' ? 'supported' : 'external-handoff',
     computerUser: platform === 'win32' ? 'supported' : 'unavailable',
     processFence: platform === 'win32' ? 'job-object' : 'degraded',

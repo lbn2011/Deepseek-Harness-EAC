@@ -108,7 +108,7 @@ window.__ModuleLoader__.load({
             contextLength: String(v.contextLength || "2"),
             animMs: Number(v.animMs != null ? v.animMs : 500),
           };
-          if (getState().mode !== pluginSettings.mode) setState({ mode: pluginSettings.mode });
+          if (getState().mode !== pluginSettings.mode && !isModePinActive()) setState({ mode: pluginSettings.mode });
           applyAnimDuration();
         }
       } catch (e) {}
@@ -135,9 +135,14 @@ window.__ModuleLoader__.load({
     function setMode(m) {
       setState({ mode: m });
       pluginSettings.mode = m;
+      // 写盘是异步的，快照可能先于落盘返回旧的 mode；短暂钉住用户的选择，
+      // 避免「切到 2 → 下方新增的 api/模型输入框被快照回写瞬间拉回消失」。
+      modePinnedUntil = Date.now() + 2500;
       try {
         if (settingsScope) settingsScope.set("mode", m);
-      } catch (e) {}
+      } catch (e) {
+        console.warn("[dsh-side-session] set mode failed: " + ((e && e.message) || e));
+      }
     }
     function setPluginSetting(key, val) {
       pluginSettings[key] = val;
@@ -1099,12 +1104,54 @@ window.__ModuleLoader__.load({
     // 设置面板（settings.section list 槽）
     // 三模式 select + API Key password（mode2 时展示）+ model + endpoint + 面板宽度
     // ------------------------------------------------------------------
+    // 三模式 select + API Key password（mode2 时展示）+ model + endpoint + 面板宽度
+    // ------------------------------------------------------------------
+    // 已存 Key 的本地记忆：serve 端 apiKey 声明为 role("secret")，设置快照会
+    // 整体移除该字段（值为 undefined），永远读不回明文。用 lastKnownApiKey
+    // 记住最近一次落盘的 key，仅用于展示「已保存」状态与避免空串覆盖。
+    var lastKnownApiKey = "";
+    // 用户刚切过模式：短暂屏蔽快照回写把模式拉回旧值（写盘异步，快照可能
+    // 先于落盘回来旧 mode，导致下面新增的 api/模型输入框瞬间消失）。
+    var modePinnedUntil = 0;
+    function isModePinActive() { return Date.now() < modePinnedUntil; }
+    function settingsHasApiKey() { return !!(lastKnownApiKey || pluginSettings.apiKey); }
+    function persistApiKey(value) {
+      setPluginSetting("apiKey", value);
+      if (value) lastKnownApiKey = value;
+    }
+
     function SettingsCard(props) {
       useStore();
       var mode = pluginSettings.mode;
-      var apiKey = pluginSettings.apiKey;
-      var model = pluginSettings.model;
-      var endpoint = pluginSettings.endpoint;
+      var forceRenderState = useState(0);
+      var forceRender = forceRenderState[1];
+      // 三个字段的本地草稿：编辑期间任何外部快照回写都不得覆盖正在输入的值；
+      // 未编辑过的字段每次渲染都从最新 pluginSettings 重新 seed（mode 切到 2
+      // 后字段首次出现时拿到的是实时已存配置，而不是首次挂载时的旧快照）。
+      var draftsRef = useRef({ apiKey: "", model: pluginSettings.model, endpoint: pluginSettings.endpoint });
+      var editedRef = useRef({ apiKey: false, model: false, endpoint: false });
+      var fields = ["apiKey", "model", "endpoint"];
+      for (var fi = 0; fi < fields.length; fi++) {
+        var fk = fields[fi];
+        if (!editedRef.current[fk]) draftsRef.current[fk] = pluginSettings[fk];
+      }
+      function setDraft(key, value) {
+        editedRef.current[key] = true;
+        draftsRef.current[key] = value;
+        forceRender(function (x) { return x + 1; });
+      }
+      function commitDraft(key) {
+        var d = draftsRef.current[key];
+        var base = key === "apiKey" ? settingsHasApiKey() ? (lastKnownApiKey || "") : "" : pluginSettings[key];
+        if (key === "apiKey") {
+          // 空串绝不覆盖已存 key；有真实输入才落盘（secret 快照读不回，用本地记忆比对）。
+          if (d && d !== base) persistApiKey(d);
+        } else if (d !== base) {
+          setPluginSetting(key, d);
+        }
+        editedRef.current[key] = false;
+        forceRender(function (x) { return x + 1; });
+      }
       // 上下文长度：本地暂存，点「确定」才写入设置（避免 select 每次 change 都持久化导致卡顿）
       var ctxDraftState = useState(pluginSettings.contextLength || "2");
       var ctxDraft = ctxDraftState[0];
@@ -1113,33 +1160,22 @@ window.__ModuleLoader__.load({
       var animDraftState = useState(pluginSettings.animMs != null ? pluginSettings.animMs : 500);
       var animDraft = animDraftState[0];
       var setAnimDraft = animDraftState[1];
-      // API Key / 模型 / 基址：同样本地暂存、失焦才持久化。直接绑模块级
-      // pluginSettings 时，每个按键都会 settingsScope.set()（异步 IPC），
-      // 快照订阅回调 applySettingsSnapshot 在持久化完成前读到的还是旧值，
-      // 整体回写 pluginSettings → 输入框 value 被强制回退（敲一个字消失
-      // 一个字、删不进去）。草稿化后输入期间不再触碰设置域，外部快照
-      // 覆盖不到正在编辑的字段。
-      var apiKeyDraftState = useState(apiKey);
-      var apiKeyDraft = apiKeyDraftState[0];
-      var setApiKeyDraft = apiKeyDraftState[1];
-      var modelDraftState = useState(model);
-      var modelDraft = modelDraftState[0];
-      var setModelDraft = modelDraftState[1];
-      var endpointDraftState = useState(endpoint);
-      var endpointDraft = endpointDraftState[0];
-      var setEndpointDraft = endpointDraftState[1];
       // 面板卸载（切设置页 / 模式切走）时把未提交草稿写回，避免丢输入。
       // cleanup 的闭包固定捕获首次渲染的草稿值，故经 ref 取最新草稿。
-      var draftsRef = useRef({ apiKey: apiKeyDraft, model: modelDraft, endpoint: endpointDraft });
-      draftsRef.current = { apiKey: apiKeyDraft, model: modelDraft, endpoint: endpointDraft };
+      var cleanupRef = useRef(false);
       useEffect(function () {
         return function () {
+          if (cleanupRef.current) return;
+          cleanupRef.current = true;
           var d = draftsRef.current;
-          if (d.apiKey !== pluginSettings.apiKey) setPluginSetting("apiKey", d.apiKey);
-          if (d.model !== pluginSettings.model) setPluginSetting("model", d.model);
-          if (d.endpoint !== pluginSettings.endpoint) setPluginSetting("endpoint", d.endpoint);
+          var edited = editedRef.current;
+          if (edited.apiKey && d.apiKey && d.apiKey !== lastKnownApiKey) persistApiKey(d.apiKey);
+          if (edited.model && d.model !== pluginSettings.model) setPluginSetting("model", d.model);
+          if (edited.endpoint && d.endpoint !== pluginSettings.endpoint) setPluginSetting("endpoint", d.endpoint);
         };
       }, []);
+
+      var hasSavedKey = settingsHasApiKey();
 
       return h(
         "div",
@@ -1225,10 +1261,11 @@ window.__ModuleLoader__.load({
                 h("input", {
                   className: "dss-set-input",
                   type: "password",
-                  placeholder: "sk-...",
-                  value: apiKeyDraft,
-                  onChange: function (e) { setApiKeyDraft(e.target.value); },
-                  onBlur: function () { setPluginSetting("apiKey", apiKeyDraft); },
+                  placeholder: hasSavedKey ? "●●●●（已保存，输入可替换）" : "sk-...",
+                  value: draftsRef.current.apiKey,
+                  onChange: function (e) { setDraft("apiKey", e.target.value); },
+                  onBlur: function () { commitDraft("apiKey"); },
+                  onKeyDown: function (e) { if (e.key === "Enter") commitDraft("apiKey"); },
                 })
               ),
               h(
@@ -1238,9 +1275,10 @@ window.__ModuleLoader__.load({
                 h("input", {
                   className: "dss-set-input",
                   placeholder: "deepseek-chat",
-                  value: modelDraft,
-                  onChange: function (e) { setModelDraft(e.target.value); },
-                  onBlur: function () { setPluginSetting("model", modelDraft); },
+                  value: draftsRef.current.model,
+                  onChange: function (e) { setDraft("model", e.target.value); },
+                  onBlur: function () { commitDraft("model"); },
+                  onKeyDown: function (e) { if (e.key === "Enter") commitDraft("model"); },
                 })
               ),
               h(
@@ -1250,9 +1288,10 @@ window.__ModuleLoader__.load({
                 h("input", {
                   className: "dss-set-input",
                   placeholder: "https://api.deepseek.com",
-                  value: endpointDraft,
-                  onChange: function (e) { setEndpointDraft(e.target.value); },
-                  onBlur: function () { setPluginSetting("endpoint", endpointDraft); },
+                  value: draftsRef.current.endpoint,
+                  onChange: function (e) { setDraft("endpoint", e.target.value); },
+                  onBlur: function () { commitDraft("endpoint"); },
+                  onKeyDown: function (e) { if (e.key === "Enter") commitDraft("endpoint"); },
                 })
               )
             )
@@ -1260,6 +1299,9 @@ window.__ModuleLoader__.load({
         h("div", { className: "dss-set-hint" }, "浮窗可自由拖动/缩放；左下角侧栏图标或 Ctrl+Shift+S 唤起。"),
         mode === "1"
           ? h("div", { className: "dss-set-hint" }, "使用 DSH 全局凭据（DEEPSEEK_API_KEY 环境变量或 ~/.dsh/.credentials.yaml）。")
+          : null,
+        mode === "2"
+          ? h("div", { className: "dss-set-hint" }, hasSavedKey ? "已保存插件自带 Key；重新输入会替换旧值。" : "输入后回车 / 失焦即保存（Key 仅存储在本机 settings.yaml，界面不回显明文）。")
           : null,
         mode === "3"
           ? h("div", { className: "dss-set-hint" }, "走服务端 ctx.llm.stream，不读任何 key。需宿主 LLM 服务可用。")

@@ -52,8 +52,25 @@ test('dsh-compact policy: exact provider/model override wins without affecting d
     retainRatio: 0.3,
     recoverOnOverflow: false,
     maxOverflowRetries: 0,
+    retryTransientBadRequest: true,
   })
   assert.equal(resolvePolicy(config, { provider: 'openai', model: 'other' }).thresholdRatio, 0.75)
+})
+
+test('dsh-compact policy: transient 400 default on, can be disabled globally or per model', () => {
+  assert.equal(sanitizeConfig({}).retryTransientBadRequest, true)
+  assert.equal(sanitizeConfig({ retryTransientBadRequest: false }).retryTransientBadRequest, false)
+  assert.throws(() => sanitizeConfig({ retryTransientBadRequest: 'yes' }), /retryTransientBadRequest/)
+  const config = sanitizeConfig({
+    retryTransientBadRequest: false,
+    modelPolicies: [{ provider: 'p', model: 'm', retryTransientBadRequest: true }],
+  })
+  // 全局关，但 p/m 模型专属打开 → p/m 上生效，其余跟随全局关闭。
+  assert.equal(resolvePolicy(config, { provider: 'p', model: 'm' }).retryTransientBadRequest, true)
+  assert.equal(resolvePolicy(config, { provider: 'q', model: 'n' }).retryTransientBadRequest, false)
+  // 内核配置面不接收该键（避免 schemastery 拒绝未知字段）。
+  const basic = toBasicResolvedConfig({ retryTransientBadRequest: false })
+  assert.equal(basic.retryTransientBadRequest, undefined)
 })
 
 test('dsh-compact policy: parent engine performs one compaction attempt per pressure check', () => {

@@ -275,6 +275,37 @@ const clientUpdateHost = {
 // settings 兼容层：与 updater.js 的 userData/settings.json 同文件同语义
 // （load 回退 {}，save 2 空格缩进 + 尾换行），端号偏好双壳共享。
 let quitting = false;
+
+// 当前内核 Web 服务地址（手机桥 RPC 转发用）。boot.start / boot.restart
+// 成功后更新，服务停止时清空。
+let currentWebInfo: { webUrl: string; port: number } | null = null;
+
+// 手机连接桥（5.1.1：LAN 配对 + 白名单 RPC + 手机端占位页，见 phone-bridge.ts）。
+const phoneBridgeMod = require('./phone-bridge.js') as {
+  createPhoneBridge(options: {
+    getWebUrl: () => string | null;
+    log: (message: string) => void;
+  }): {
+    start(): Promise<{ url: string; port: number }>;
+    stop(): Promise<void>;
+    status(): { running: boolean; port: number; lanUrl: string; mobileReady: boolean; pairing: { state: string; expiresAt: number | null } };
+    decide(approved: boolean): { ok: boolean; error?: string };
+    disconnect(): { ok: boolean };
+  };
+};
+const phoneBridge = phoneBridgeMod.createPhoneBridge({
+  getWebUrl: () => (currentWebInfo ? currentWebInfo.webUrl : null),
+  log: (m) => say(m),
+});
+function handlePhoneMethod(method: string, p: RpcParams): RpcResult | Promise<RpcResult> {
+  if (method === 'phone.start') return phoneBridge.start().then((r) => ({ ok: true, ...r }));
+  if (method === 'phone.stop') return phoneBridge.stop().then(() => ({ ok: true }));
+  if (method === 'phone.status') return { ok: true, ...phoneBridge.status() };
+  if (method === 'phone.decide') return phoneBridge.decide(p?.approved === true) as RpcResult;
+  if (method === 'phone.disconnect') return phoneBridge.disconnect() as RpcResult;
+  return { ok: false, error: 'unknown phone method' };
+}
+
 const settingsFile = path.join(userDataDir, 'settings.json');
 function loadSettings(): Record<string, unknown> {
   try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as Record<string, unknown>; } catch { return {}; }
@@ -324,6 +355,8 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
       await preBootSync();
       const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
       log('service', 'dsh web 服务已启动: ' + r.webUrl);
+      currentWebInfo = { webUrl: r.webUrl, port: r.port };
+
       notify('boot.web-ready', r);
       return { ok: true, webUrl: r.webUrl, port: r.port };
     }
@@ -335,6 +368,8 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     await companionSyncMod.restoreKeptArtifacts(desktopProfileFn());
     const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
     log('service', 'dsh web 服务已重启: ' + r.webUrl);
+    currentWebInfo = { webUrl: r.webUrl, port: r.port };
+
     notify('boot.web-ready', r);
     return { ok: true, webUrl: r.webUrl, port: r.port };
   } catch (e) {
@@ -443,6 +478,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       throw e;
     }
     rescueIntegration.clearRescueState?.();
+    currentWebInfo = { webUrl: r.webUrl, port: r.port };
+
     notify('boot.web-ready', r);
     startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
     scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
@@ -455,6 +492,12 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     return { ok: true };
   },
   'boot.state': (): RpcResult => (bootMod.state as () => unknown)() as RpcResult,
+  // ---- phone.*（手机连接桥：LAN 配对 + 白名单 RPC + 手机端占位页） ----
+  'phone.start': (p): RpcResult | Promise<RpcResult> => handlePhoneMethod('phone.start', p),
+  'phone.stop': (p): RpcResult | Promise<RpcResult> => handlePhoneMethod('phone.stop', p),
+  'phone.status': (p): RpcResult => handlePhoneMethod('phone.status', p) as RpcResult,
+  'phone.decide': (p): RpcResult => handlePhoneMethod('phone.decide', p) as RpcResult,
+  'phone.disconnect': (p): RpcResult => handlePhoneMethod('phone.disconnect', p) as RpcResult,
   // ---- chrome.init（getInfo；字段集对齐 main.js chrome:init handler） ----
   'chrome.init': (): RpcResult => {
     const s = loadSettings() as {

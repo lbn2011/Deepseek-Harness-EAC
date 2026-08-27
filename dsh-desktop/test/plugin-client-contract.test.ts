@@ -18,7 +18,6 @@ const USES_PLUGINS = [
   'dsh-openclaw-bridge/lib/client.js',
   'dsh-prompt-custom/lib/client.js',
   'dsh-session-manager/lib/client.js',
-  'dsh-third-party-thinking/lib/client.js',
 ];
 const SCOPE_LOAD_PLUGINS = [
   'picturereader/client.js',
@@ -26,7 +25,7 @@ const SCOPE_LOAD_PLUGINS = [
   'dsh-soul-md/client.js',
 ];
 
-test('6 个 uSES 插件：不再 require ui-renderer，且内联 shim 存在、文件可解析', () => {
+test('5 个 uSES 插件：不再 require ui-renderer，且内联 shim 存在、文件可解析', () => {
   for (const rel of USES_PLUGINS) {
     const src = readFileSync(join(PLUGINS, rel), 'utf8');
     assert.doesNotMatch(src, /require\(["']@deepseek-ai\/dsh-client-ui-renderer["']\)/,

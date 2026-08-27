@@ -4,6 +4,9 @@ const DEFAULT_CONFIG = Object.freeze({
   retainRatio: 0.20,
   recoverOnOverflow: true,
   maxOverflowRetries: 1,
+  // 非溢出的 400（INVALID_REQUEST）自愈：会话此前已有成功请求时，自动原样
+  // 重试一次，免去「无故 400、继续说一句才好」的谜之失败。可整体或按模型关闭。
+  retryTransientBadRequest: true,
   modelPolicies: Object.freeze([]),
 })
 
@@ -69,6 +72,12 @@ function normalizePolicy(input, index) {
     }
     policy.maxOverflowRetries = input.maxOverflowRetries
   }
+  if (input.retryTransientBadRequest !== undefined) {
+    if (typeof input.retryTransientBadRequest !== 'boolean') {
+      throw new TypeError(`modelPolicies[${index}].retryTransientBadRequest must be a boolean`)
+    }
+    policy.retryTransientBadRequest = input.retryTransientBadRequest
+  }
   return policy
 }
 
@@ -81,6 +90,9 @@ export function sanitizeConfig(input = {}) {
   }
   if (input.recoverOnOverflow !== undefined && typeof input.recoverOnOverflow !== 'boolean') {
     throw new TypeError('recoverOnOverflow must be a boolean')
+  }
+  if (input.retryTransientBadRequest !== undefined && typeof input.retryTransientBadRequest !== 'boolean') {
+    throw new TypeError('retryTransientBadRequest must be a boolean')
   }
   if (input.modelPolicies !== undefined && !Array.isArray(input.modelPolicies)) {
     throw new TypeError('modelPolicies must be an array')
@@ -122,6 +134,7 @@ export function sanitizeConfig(input = {}) {
     retainRatio,
     recoverOnOverflow: input.recoverOnOverflow !== false,
     maxOverflowRetries,
+    retryTransientBadRequest: input.retryTransientBadRequest !== false,
     modelPolicies,
   })
 }
@@ -137,6 +150,7 @@ export function resolvePolicy(config, target) {
     retainRatio: override?.retainRatio ?? base.retainRatio,
     recoverOnOverflow: override?.recoverOnOverflow ?? base.recoverOnOverflow,
     maxOverflowRetries: override?.maxOverflowRetries ?? base.maxOverflowRetries,
+    retryTransientBadRequest: override?.retryTransientBadRequest ?? base.retryTransientBadRequest,
   })
 }
 

@@ -6,3 +6,4 @@ sidecar/ipc-surface.js
 staged-resources/
 sidecar/ping.js
 sidecar/snapshot-ui.js
+sidecar/phone-bridge.js

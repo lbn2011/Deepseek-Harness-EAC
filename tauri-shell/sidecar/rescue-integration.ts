@@ -237,6 +237,24 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
 
 let rescueBusy = false;
 
+/** 平台化诊断 zip 命令（纯函数，便于跨平台测试）。
+ * 说明：darwin 的 ditto 归档 logs 目录本体，与 Windows `logs\*` 的内容级
+ * 打包存在目录层级差异——对诊断用途无影响；ditto 为 macOS 内置零依赖。 */
+export function buildZipCommand(
+  platform: NodeJS.Platform,
+  logsDir: string,
+  zip: string,
+): { program: string; args: string[] } {
+  if (platform === 'darwin') {
+    return { program: 'ditto', args: ['-c', '-k', logsDir, zip] };
+  }
+  return {
+    program: 'powershell',
+    args: ['-NoProfile', '-Command',
+      `Compress-Archive -Path "${logsDir}\\*" -DestinationPath "${zip}" -Force`],
+  };
+}
+
 // 恢复页面（assets/recovery.html 语义）：日志打包到桌面并打开目录。
 async function exportLogs(): Promise<Record<string, unknown>> {
   try {
@@ -244,14 +262,18 @@ async function exportLogs(): Promise<Record<string, unknown>> {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const zip = path.join(os_home_desktop(), 'dsh-eac-logs-' + stamp + '.zip');
     if (!fs.existsSync(logsDir)) return { ok: false, error: '日志目录不存在' };
+    const cmd = buildZipCommand(process.platform, logsDir, zip);
     await new Promise<void>((resolve) => {
-      const ps = cp.spawn('powershell', ['-NoProfile', '-Command',
-        `Compress-Archive -Path "${logsDir}\\*" -DestinationPath "${zip}" -Force`], { windowsHide: true, stdio: 'ignore' });
+      const ps = cp.spawn(cmd.program, cmd.args, { windowsHide: true, stdio: 'ignore' });
       ps.on('exit', () => resolve());
       ps.on('error', () => resolve());
     });
     if (!fs.existsSync(zip)) return { ok: false, error: '打包失败' };
-    cp.exec(`start "" "${path.dirname(zip).replace(/"/g, '')}"`, { windowsHide: true }, () => {});
+    if (process.platform === 'darwin') {
+      cp.exec(`open "${path.dirname(zip).replace(/"/g, '')}"`, () => {});
+    } else {
+      cp.exec(`start "" "${path.dirname(zip).replace(/"/g, '')}"`, { windowsHide: true }, () => {});
+    }
     H.log('rescue', '日志已导出: ' + zip);
     return { ok: true, path: zip };
   } catch (err) {

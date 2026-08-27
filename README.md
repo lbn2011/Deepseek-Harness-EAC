@@ -9,13 +9,12 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
-封装为<strong>开箱即用的 Windows / Linux 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
+封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
 
@@ -63,17 +62,18 @@
 ### 系统要求
 
 - Windows 10/11（x64）
-- Linux x86_64（Arch / Ubuntu / Debian / Fedora，或任意支持 AppImage 的发行版）
+- macOS 13+（Apple Silicon / arm64，桌面版）
 - 无需预装 Node.js 或任何其他运行时
 
 ### Windows
 
-> 正式版当前为 v6.0.0（Tauri 壳，Windows + Linux 双平台）。安装包直接从 Release 下载。
+> 正式版当前为 v4.4.1（Electron 壳）；下方 Lite 版为 Tauri（Rust）壳，体积更小、启动更快。安装包直接从 Release 下载。
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-Setup-6.0.0-x64.exe) | Windows 安装到系统，创建快捷方式 | 见 Release |
-| [便携版 zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-6.0.0-portable.zip) | Windows 免安装，解压任意目录运行 | 见 Release |
+| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | 安装到系统，创建快捷方式 | ~246 MB |
+| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | 免安装单文件，可放任意目录运行 | ~212 MB |
+| [Lite 版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.5-lite/Deepseek.Harness.EAC.v4Lite_4.5.0_x64-setup.exe) | **Lite 精简版**（Tauri 壳，与上方正式版相互独立、可并存）：主程序为 `Deepseek Harness EAC v4Lite.exe`，数据目录 `~/.dsh-v4lite`，SHA256 校验文件随 Release 提供 | ~73 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
@@ -82,18 +82,34 @@
 > - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
 >   与 `~/.dsh`，升级过程不触碰。
 
+### macOS（Apple Silicon / arm64）
+
+> macOS 桌面版与 Windows/Linux 同源同版本，随 [v5.1.0 Release](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v5.1.0) 一同发布。
+
+| 文件 | 说明 | 大小 |
+| --- | --- | --- |
+| [安装镜像 .dmg](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.dmg) | 双击挂载后拖入 Applications | ~136 MB |
+| [应用包 .app.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.app.zip) | 解压后直接运行 | ~157 MB |
+| [校验和 SHA256SUMS-macos.txt](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/SHA256SUMS-macos.txt) | macOS 资产 SHA256 | — |
+
+- 桌面配置目录：`~/Library/Application Support/deepseek-harness-eac/`；dsh 数据仍在 `~/.dsh`（与 CLI 共享，会话互通）。
+- 未签名、未公证（个人自用定位）：首次打开若被 Gatekeeper 拦截，右键 →「打开」。
+- 客户端自更新在 macOS v1 暂不提供（上游 Release 暂无 macOS 资产）；dsh agent（内核）更新完整保留。
+
 ### Linux（x64）
 
-Linux 版随 v6.0.0 正式交付，支持 **Ubuntu / Debian** 与通用 AppImage（升级由系统包管理器管理，不走应用内自更新）：
+> Linux 桌面端由 CI（Ubuntu 22.04）持续构建与验证，以独立版本线发布（最近维护版 v4.4.0）。Windows/macOS 走统一版本线（当前 v5.1.0），Linux 并入统一版本线待发布管线就绪后补发。
 
-| 发行版 | 包 | 安装 |
-| --- | --- | --- |
-| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-6.0.0-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-6.0.0-amd64.deb` |
-| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v6.0.0/Deepseek-Harness-EAC-6.0.0-x86_64.AppImage) | `chmod +x` 后直接运行 |
+| 文件 | 说明 |
+| --- | --- |
+| [.deb（Debian/Ubuntu）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | 安装后可从应用菜单启动 |
+| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | 免安装：`chmod +x` 后直接运行 |
+| [.rpm（Fedora/openSUSE）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
+| [.pacman（Arch）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
 
-> - 卸载：`apt remove dsh-desktop`
-> - 与 Windows 版一致：内置 Node.js 与 npm CLI，目标机器无需预装 Node.js；数据目录沿用 `~/.dsh`（`DSH_HOME`）
-> - Linux 版由系统包管理器管理升级，不走应用内自更新；安装到仓库根 `linux` 分支源码可自行构建
+- 依赖：Tauri 2 + webkit2gtk-4.1（debian 系安装 `libwebkit2gtk-4.1-dev` 等构建依赖见仓库 CI）；AppImage 自带运行时，构建基线 Ubuntu 22.04。
+- 桌面配置目录：`~/.config/deepseek-harness-eac`（XDG）；dsh 数据仍在 `~/.dsh`（与 CLI 共享）。
+- 剪贴板等系统集成依赖桌面环境的 `wl-copy`/`xclip`/`xsel`，通知依赖 `notify-send`；缺失时对应能力自动降级为「外部依赖」，不伪装成功。
 
 ### 首次使用
 
@@ -166,14 +182,14 @@ Linux 版随 v6.0.0 正式交付，支持 **Ubuntu / Debian** 与通用 AppImage
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 2 二维码" width="320" />
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 3 二维码" width="320" />
     </td>
     <td align="center" width="50%">
       <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
     </td>
   </tr>
   <tr>
-    <td align="center"><strong>QQ 交流群 2</strong><br />群号：1021296425</td>
+    <td align="center"><strong>QQ 交流群 3</strong><br />群号：1083832019</td>
     <td align="center"><strong>微信交流群</strong></td>
   </tr>
 </table>
@@ -362,6 +378,8 @@ research/                     # 第三方微信/桥接协议调研资料
 ### 贡献者
 
 感谢每一位贡献者：
+
+特别致谢 [@CharlesAQ](https://github.com/CharlesAQ) —— macOS 桌面移植（[PR #234](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/234)）：Tauri 壳 darwin 分支、平台适配层、darwin 资源装配与裁剪、`.app`/`.dmg` 打包配置，让 EAC 首次跑上 Apple Silicon。
 
 <p align="center">
   <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">

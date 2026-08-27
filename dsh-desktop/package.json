@@ -49,6 +49,7 @@
     "nanoid": "^3.3.18",
     "pino": "~8.21.0",
     "schemastery": "^3.18.0",
+    "unzipper": "^0.12.3",
     "zstddec": "0.2.0"
   },
   "devDependencies": {

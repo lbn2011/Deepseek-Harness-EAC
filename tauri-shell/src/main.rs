@@ -95,11 +95,50 @@ impl Platform for CurrentPlatform {
 }
 
 fn resource_root() -> std::path::PathBuf {
-    CurrentPlatform::resource_root()
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent().map(|p| p.to_path_buf()) {
+            if dir.join("sidecar").join("server.js").exists() {
+                return dir;
+            }
+            let res = dir.join("resources");
+            if res.join("sidecar").join("server.js").exists() {
+                return res;
+            }
+            // macOS bundle 布局：Contents/MacOS/<bin> → Contents/Resources/。
+            #[cfg(target_os = "macos")]
+            if let Some(contents) = dir.parent() {
+                let mac_res = contents.join("Resources");
+                if mac_res.join("sidecar").join("server.js").exists() {
+                    return mac_res;
+                }
+            }
+        }
+    }
+    // 开发态不把 CARGO_MANIFEST_DIR 编进 release 二进制，避免成品泄露构建机
+    // 绝对路径。从 cwd 或 target/{debug,release} 下的可执行文件向上探测仓库根。
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.extend(cwd.ancestors().map(|path| path.to_path_buf()));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.extend(parent.ancestors().map(|path| path.to_path_buf()));
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.join("dsh-desktop").is_dir() && path.join("tauri-shell").is_dir())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 fn sidecar_script() -> std::path::PathBuf {
-    resource_root().join("sidecar").join("server.js")
+    let root = resource_root();
+    let packaged = root.join("sidecar").join("server.js");
+    if packaged.exists() {
+        return packaged;
+    }
+    // 开发态（仓库根布局）：sidecar 编译产物位于 tauri-shell/sidecar/。
+    root.join("tauri-shell").join("sidecar").join("server.js")
 }
 
 fn dsh_desktop_dir() -> String {
@@ -142,6 +181,199 @@ fn is_allowed_main_navigation(target: &tauri::Url) -> bool {
 type BridgeCheck = (&'static str, Value, Box<dyn Fn(&Value) -> bool>);
 
 /// 解析 Node 运行时：优先内置 vendor/node（与 legacy-shell 壳共用一份），回退 PATH。
+
+// ---------------------------------------------------------------------------
+// 主窗尺寸/位置记忆（issue：副屏宽度不够显示不全）。
+// 保存 app_config_dir/window-state.json（{x,y} 为物理像素，{w,h} 为逻辑尺寸，
+// 与 Tauri builder inner_size/position 的语义严格对应）。
+// 恢复时做显示器 work-area 校验：中心点不在任何显示器上的旧状态丢弃，
+// 尺寸收敛到所在显示器可用范围，位置 clamp 保证至少 40% 宽度可拖回。
+// ---------------------------------------------------------------------------
+
+const DEFAULT_INNER_W: f64 = 1400.0;
+const DEFAULT_INNER_H: f64 = 900.0;
+/// 主窗允许的最小逻辑尺寸默认值（480×360：适配副屏窄屏，与浮窗下限一致）。
+/// 可用环境变量 DSH_WINDOW_MIN_W / DSH_WINDOW_MIN_H 覆盖（任意 >0 的有限值）。
+const MIN_INNER_W_DEFAULT: f64 = 480.0;
+const MIN_INNER_H_DEFAULT: f64 = 360.0;
+/// 无保存状态时首启尺寸相对 work area 的边距（逻辑像素）。
+const FIRST_RUN_MARGIN: f64 = 16.0;
+/// 恢复位置时保证可见的最小宽度（逻辑像素），防止窗口大半落在屏外。
+const MIN_VISIBLE_W: f64 = 80.0;
+
+/// 读取正浮点环境变量；缺失或非法（非数值 / ≤0 / 非有限）时回退 fallback。
+/// 供窗口边界覆盖（DSH_WINDOW_MIN_W/H、DSH_WINDOW_W/H）使用。
+fn env_positive_f64(name: &str, fallback: f64) -> f64 {
+    match std::env::var(name) {
+        Ok(v) => v
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .unwrap_or(fallback),
+        Err(_) => fallback,
+    }
+}
+
+/// 主窗允许的最小逻辑尺寸（默认 480×360，可用环境变量覆盖）。
+fn min_inner_w() -> f64 {
+    env_positive_f64("DSH_WINDOW_MIN_W", MIN_INNER_W_DEFAULT)
+}
+
+fn min_inner_h() -> f64 {
+    env_positive_f64("DSH_WINDOW_MIN_H", MIN_INNER_H_DEFAULT)
+}
+
+/// 无记忆时首启默认逻辑尺寸（默认 1400×900，可用环境变量覆盖）。
+fn default_inner_w() -> f64 {
+    env_positive_f64("DSH_WINDOW_W", DEFAULT_INNER_W)
+}
+
+fn default_inner_h() -> f64 {
+    env_positive_f64("DSH_WINDOW_H", DEFAULT_INNER_H)
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+struct WindowState {
+    x: i32,
+    y: i32,
+    w: f64,
+    h: f64,
+    maximized: bool,
+}
+
+fn window_state_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path().app_config_dir().ok().map(|dir| dir.join("window-state.json"))
+}
+
+fn load_window_state(app: &tauri::AppHandle) -> Option<WindowState> {
+    let path = window_state_path(app)?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn save_window_state(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(path) = window_state_path(app) else { return };
+    let Some(win) = app.get_webview_window("main") else { return };
+    let Ok(size) = win.outer_size() else { return };
+    let Ok(pos) = win.outer_position() else { return };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let logical = size.to_logical::<f64>(scale);
+    let state = WindowState {
+        x: pos.x,
+        y: pos.y,
+        w: logical.width,
+        h: logical.height,
+        maximized: win.is_maximized().unwrap_or(false),
+    };
+    let json = match serde_json::to_string(&state) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[shell] window-state serialize failed: {}", e);
+            return;
+        }
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[shell] window-state mkdir failed: {}", e);
+        }
+    }
+    if let Err(e) = std::fs::write(&path, json) {
+        eprintln!("[shell] window-state save failed: {}", e);
+    }
+}
+
+/// 拖动缩放期间避免写盘风暴：同一窗口 800ms 内最多落盘一次；
+/// 最终状态由 CloseRequested / ExitRequested 兜底保存。
+static LAST_STATE_SAVE: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
+fn throttle_save_window_state(app: &tauri::AppHandle) {
+    let now = std::time::Instant::now();
+    let Ok(mut last) = LAST_STATE_SAVE.lock() else { return };
+    if last
+        .map(|t| now.duration_since(t).as_millis() < 800)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    *last = Some(now);
+    save_window_state(app);
+}
+
+/// 计算主窗初始（inner_size 逻辑尺寸, position 逻辑坐标, 是否恢复最大化）。
+/// 有合法历史状态 → 恢复并在目标显示器 work area 内 clamp；
+/// 无历史 → 按主显示器 work area 收敛默认尺寸并居中。
+fn resolved_initial_bounds(
+    app: &tauri::AppHandle,
+) -> (f64, f64, Option<(f64, f64)>, bool) {
+    let primary = app.primary_monitor().ok().flatten();
+
+    let min_w = min_inner_w();
+    let min_h = min_inner_h();
+    let mut out_w = default_inner_w();
+    let mut out_h = default_inner_h();
+    let mut out_pos: Option<(f64, f64)> = None;
+    let mut out_max = false;
+
+    if let Some(p) = primary.as_ref() {
+        let scale = p.scale_factor();
+        let ct = p.work_area();
+        let work_w = ct.size.width as f64 / scale;
+        let work_h = ct.size.height as f64 / scale;
+        // 窄屏收敛：配置的下限若超过 work area（OS 级最小尺寸大于屏幕可用
+        // 范围），窗口将永远无法完整显示 —— 以 work area 为实际下限（保底 1px）。
+        let eff_min_w = min_w.min(work_w - FIRST_RUN_MARGIN).max(1.0);
+        let eff_min_h = min_h.min(work_h - FIRST_RUN_MARGIN).max(1.0);
+        out_w = out_w.min(work_w - FIRST_RUN_MARGIN).max(eff_min_w);
+        out_h = out_h.min(work_h - FIRST_RUN_MARGIN).max(eff_min_h);
+        let cx = ct.position.x as f64 + (ct.size.width as f64 - out_w * scale) / 2.0;
+        let cy = ct.position.y as f64 + (ct.size.height as f64 - out_h * scale) / 2.0;
+        out_pos = Some((cx / scale, cy / scale));
+    }
+
+    if let Some(st) = load_window_state(app) {
+        // 目标显示器：窗口中心点所在显示器（副屏拼接/拔插后旧坐标仍指向其它
+        // 屏也算合法；完全失效时 monitor_from_point 返回 None → 回退上面的默认）。
+        let scale = primary.as_ref().map(|p| p.scale_factor()).unwrap_or(1.0);
+        let cx = st.x as f64 + st.w * scale / 2.0;
+        let cy = st.y as f64 + st.h * scale / 2.0;
+        let target = app
+            .monitor_from_point(cx, cy)
+            .ok()
+            .flatten()
+            .or_else(|| primary.clone());
+        if let Some(m) = target {
+            let mscale = m.scale_factor();
+            let wa = m.work_area();
+            let work_w = wa.size.width as f64 / mscale;
+            let work_h = wa.size.height as f64 / mscale;
+            // 与首启一致：恢复下限不越过目标显示器 work area（极窄副屏上
+            // 已保存的窄尺寸原样恢复，不会被 OS 下限弹回而显示不全）。
+            let eff_min_w = min_w.min(work_w - FIRST_RUN_MARGIN).max(1.0);
+            let eff_min_h = min_h.min(work_h - FIRST_RUN_MARGIN).max(1.0);
+            let w = st.w.clamp(eff_min_w, work_w.max(eff_min_w));
+            let h = st.h.clamp(eff_min_h, work_h.max(eff_min_h));
+            let min_vis = MIN_VISIBLE_W.max(w * 0.4);
+            let x = (st.x as f64)
+                .max(wa.position.x as f64)
+                .min(wa.position.x as f64 + wa.size.width as f64 - min_vis);
+            let y = (st.y as f64)
+                .max(wa.position.y as f64)
+                .min(wa.position.y as f64 + wa.size.height as f64 - 40.0);
+            out_w = w;
+            out_h = h;
+            out_pos = Some((x / mscale, y / mscale));
+            out_max = st.maximized;
+        }
+    }
+
+    (out_w, out_h, out_pos, out_max)
+}
+
+/// 解析 Node 运行时：优先内置 vendor/node（与 Electron 壳共用一份），回退 PATH。
 fn resolve_node() -> String {
     if let Ok(p) = std::env::var("DSH_NODE_EXE") {
         if !p.is_empty() {
@@ -568,6 +800,12 @@ fn is_safe_external_url(url: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// AppleScript 字符串转义：反斜杠与双引号（osascript 通知文案用）。
+#[cfg(target_os = "macos")]
+fn escape_apple_script_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 async fn open_external(url: &str) -> Result<(), String> {
     if !is_safe_external_url(url) {
         return Err("unsafe external URL".into());
@@ -611,6 +849,12 @@ async fn open_native_target(target: &str) -> Result<(), String> {
         command.arg(target);
         return run_bounded_command(command, "xdg-open").await;
     }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(target);
+        return run_bounded_command(command, "open").await;
+    }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = target;
@@ -646,6 +890,17 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         let mut command = Command::new("notify-send");
         command.args(["--app-name", "Deepseek Harness EAC", title, body]);
         return run_bounded_command(command, "notify-send").await;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            escape_apple_script_string(body),
+            escape_apple_script_string(title)
+        );
+        let mut command = Command::new("osascript");
+        command.args(["-e", &script]);
+        return run_bounded_command(command, "osascript notification").await;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
@@ -722,6 +977,10 @@ async fn write_clipboard_text(text: &str) -> Result<(), String> {
             "Linux clipboard requires wl-copy, xclip, or xsel ({})",
             failures.join("; ")
         ))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return run_clipboard_command("pbcopy", &[], text).await;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
@@ -1473,22 +1732,37 @@ fn main() {
                                 let app_win = app_win_inner;
                                 let loading = format!("http://127.0.0.1:{}/loading", WS_PORT);
                                 if let Ok(url) = tauri::Url::parse(&loading) {
-                                    let built = tauri::webview::WebviewWindowBuilder::new(
+                                    let (sim_w, sim_h, sim_pos, sim_max) =
+                                        resolved_initial_bounds(&app_win);
+                                    let mut builder = tauri::webview::WebviewWindowBuilder::new(
                                         &app_win,
                                         "main",
                                         tauri::WebviewUrl::External(url),
                                     )
                                     .title("Deepseek Harness EAC")
-                                    .inner_size(1400.0, 900.0)
-                                    .min_inner_size(960.0, 640.0)
+                                    .inner_size(sim_w, sim_h)
+                                    .min_inner_size(min_inner_w(), min_inner_h())
                                     .decorations(false)
                                     .on_navigation(is_allowed_main_navigation)
                                     // 关闭窗口级 drag&drop handler，放行页面 HTML5 拖拽
                                     //（否则图片/文件拖不进输入框，页面 dragover/drop 收不到）。
                                     .disable_drag_drop_handler()
+                                    // dsh-stt 语音识别：WebView2 在无用户手势下 getUserMedia
+                                    // 可能被拒，放开 autoplay 策略。WebView2 的麦克风权限本身
+                                    // 走 Windows 系统隐私设置，无需额外 permission 授权。
+                                    // ⚠️ 未验证（本机无 cargo 工具链，需装 rustup 后构建确认）。
+                                    .additional_browser_args("--autoplay-policy=no-user-gesture-required")
                                     .initialization_script(&init);
-                                    if let Err(e) = built.build() {
-                                        eprintln!("[shell] main window build failed: {}", e);
+                                    if let Some((px, py)) = sim_pos {
+                                        builder = builder.position(px, py);
+                                    }
+                                    match builder.build() {
+                                        Ok(win) => {
+                                            if sim_max {
+                                                let _ = win.maximize();
+                                            }
+                                        }
+                                        Err(e) => eprintln!("[shell] main window build failed: {}", e),
                                     }
                                 }
                             });
@@ -1558,16 +1832,28 @@ fn main() {
                                 );
                                 if let Ok(url) = tauri::Url::parse(&died) {
                                     if app_died.get_webview_window("main").is_none() {
-                                        let _ = tauri::webview::WebviewWindowBuilder::new(
+                                        let (sim_w, sim_h, sim_pos, sim_max) =
+                                            resolved_initial_bounds(&app_died);
+                                        let mut builder = tauri::webview::WebviewWindowBuilder::new(
                                             &app_died,
                                             "main",
                                             tauri::WebviewUrl::External(url),
                                         )
                                         .title("Deepseek Harness EAC")
-                                        .inner_size(1400.0, 900.0)
-                                        .min_inner_size(960.0, 640.0)
-                                        .decorations(false)
-                                        .build();
+                                        .inner_size(sim_w, sim_h)
+                                        .min_inner_size(min_inner_w(), min_inner_h())
+                                        .decorations(false);
+                                        if let Some((px, py)) = sim_pos {
+                                            builder = builder.position(px, py);
+                                        }
+                                        match builder.build() {
+                                            Ok(win) => {
+                                                if sim_max {
+                                                    let _ = win.maximize();
+                                                }
+                                            }
+                                            Err(e) => eprintln!("[shell] died window build failed: {}", e),
+                                        }
                                     } else if let Some(win) = app_died.get_webview_window("main") {
                                         let _ = win.show();
                                         let _ = win.navigate(url);
@@ -1658,12 +1944,14 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            use tauri::Manager;
             match event {
                 // 主窗关闭 → exitAction 策略（minimize/quit/ask 选择页）；浮窗真关闭。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     if window.label() == "main" {
+                        // 退出前先落盘当前尺寸/位置（ExitRequested 还会兜底一次）。
+                        save_window_state(window.app_handle());
                         api.prevent_close();
-                        use tauri::Manager;
                         let app = window.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             apply_exit_policy(&app, true).await;
@@ -1671,13 +1959,22 @@ fn main() {
                     }
                 }
                 // 最大化状态变化 → win.maximized 通知（桥 onMaximizeChange 消费）。
-                tauri::WindowEvent::Resized(_) if window.label() == "main" => {
-                    let m = window.is_maximized().unwrap_or(false);
-                    if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
-                        let _ = shell_notify().send(serde_json::json!({
-                            "method": "win.maximized",
-                            "params": { "maximized": m }
-                        }));
+                tauri::WindowEvent::Resized(_) => {
+                    if window.label() == "main" {
+                        let m = window.is_maximized().unwrap_or(false);
+                        if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
+                            let _ = shell_notify().send(serde_json::json!({
+                                "method": "win.maximized",
+                                "params": { "maximized": m }
+                            }));
+                        }
+                        throttle_save_window_state(window.app_handle());
+                    }
+                }
+                // 拖移后保存位置（节流写盘，最终态由关闭/退出兜底）。
+                tauri::WindowEvent::Moved(_) => {
+                    if window.label() == "main" {
+                        throttle_save_window_state(window.app_handle());
                     }
                 }
                 _ => {}
@@ -1685,8 +1982,10 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(move |_app, event| {
+        .run(move |app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                // 进程退出前最终落盘一次窗口状态（兜底 CloseRequested 之前的分支）。
+                save_window_state(app);
                 // 优雅退出（同步有界，事件循环内完成，杜绝「调度后进程先退」的孤儿）：
                 // shutdown RPC → sidecar 有界回收 dsh web 进程树 → 兜底 kill。
                 let state = BRIDGE.get_or_init(|| BridgeState {
@@ -1800,5 +2099,20 @@ mod tests {
         assert!(!is_allowed_main_navigation(&tauri::Url::parse("https://evil.example.com/").unwrap()));
         assert!(!is_allowed_main_navigation(&tauri::Url::parse("http://localhost:9999/").unwrap()));
         assert!(!is_allowed_main_navigation(&tauri::Url::parse("http://198.51.100.7:19873/").unwrap()));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests_macos {
+    use super::escape_apple_script_string;
+
+    #[test]
+    fn escapes_backslashes_and_quotes() {
+        assert_eq!(escape_apple_script_string("a\\b\"c"), "a\\\\b\\\"c");
+    }
+
+    #[test]
+    fn leaves_plain_text_unchanged() {
+        assert_eq!(escape_apple_script_string("hello 世界"), "hello 世界");
     }
 }

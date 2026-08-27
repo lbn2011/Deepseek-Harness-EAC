@@ -141,6 +141,26 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
         send('float.close', { win: f && f.win });
       },
     },
+    // 手机连接桥（5.1.1）：LAN 配对 + 白名单 RPC + 手机端占位页。消费端是
+    // 内置插件 dsh-phone 的设置页「连接手机」；键集与 preload.ts 一致（契约锁定）。
+    phoneBridge: {
+      start: function () { return call('phone.start', {}); },
+      stop: function () { return call('phone.stop', {}); },
+      status: function () { return call('phone.status', {}); },
+      decide: function (approved: boolean) { return call('phone.decide', { approved: !!approved }); },
+      disconnect: function () { return call('phone.disconnect', {}); },
+      onStatus: function (cb: (status: any) => void) {
+        var hook = function (method: string, params: any) {
+          if (method !== 'phone.status') return;
+          try { cb(params); } catch (e) { /* 回调异常不断桥 */ }
+        };
+        notifyHooks.push(hook);
+        return function () {
+          var i = notifyHooks.indexOf(hook);
+          if (i >= 0) notifyHooks.splice(i, 1);
+        };
+      },
+    },
     // 插件保护中心：快照 / 回滚 / 体检 / 修复 / 事故报告。
     guard: {
       action: function (action: string, value?: unknown) { return call('guard:action', { action: action, value: value }); },

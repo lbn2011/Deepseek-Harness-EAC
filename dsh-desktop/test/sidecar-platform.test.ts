@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-test('sidecar exposes Linux XDG data and desktop capabilities over shell.info', {
+test('sidecar exposes platform data dir and desktop capabilities over shell.info', {
   timeout: 15000,
   skip: process.platform === 'win32' ? 'requires a Linux sidecar process' : false,
 }, async () => {
@@ -17,6 +17,7 @@ test('sidecar exposes Linux XDG data and desktop capabilities over shell.info', 
     env: {
       ...process.env,
       DSH_HOME: join(root, 'dsh-home'),
+      HOME: join(root, 'home'),
       XDG_CONFIG_HOME: join(root, 'xdg'),
       DSH_DESKTOP_RECOVERY: '1',
     },
@@ -37,10 +38,14 @@ test('sidecar exposes Linux XDG data and desktop capabilities over shell.info', 
 
   try {
     const info = await call('shell.info');
-    assert.equal(info.platform, 'linux');
-    assert.equal(info.userDataDir, join(root, 'xdg', 'deepseek-harness-eac'));
+    assert.equal(info.platform, process.platform);
+    assert.equal(info.userDataDir, process.platform === 'darwin'
+      ? join(root, 'home', 'Library', 'Application Support', 'deepseek-harness-eac')
+      : join(root, 'xdg', 'deepseek-harness-eac'));
     const capabilities = info.capabilities as Record<string, unknown>;
-    assert.ok(['supported', 'external-dependency'].includes(String(capabilities.clipboard)));
+    // capability enum has three honest values; darwin reports 'unavailable' until
+    // the platform-adapter task adds darwin support (then it becomes 'supported').
+    assert.ok(['supported', 'external-dependency', 'unavailable'].includes(String(capabilities.clipboard)));
     assert.equal(capabilities.clientSelfUpdate, 'external-handoff');
     assert.equal(capabilities.computerUser, 'unavailable');
     assert.equal(capabilities.processFence, 'degraded');

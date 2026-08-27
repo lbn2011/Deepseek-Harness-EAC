@@ -24,106 +24,143 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
 排队消费对 update 类任务遗漏）；本地链接（link:/file:）插件从上游接管更新
 （junction EPERM 处理 + 失败回滚）；24h 发布保护期过滤；市场自身经官方
 内置插件更新自更新）→
-5.0.0（main 主线：桌面壳切换 Tauri —— Rust L1 壳 + Node sidecar L2 + dsh 内核
+5.0.0（本版：桌面壳切换 Tauri —— Rust L1 壳 + Node sidecar L2 + dsh 内核
 零改动 L3 三层架构（ADR 0002）；安装包体积 241MB → 155MB；全功能桥
 （窗口/托盘/浮窗隔离/退出策略/救援链/快捷方式维护）；自更新接线（客户端
 整树交换 + agent 更新 + 自动检查定时器）；安装器自动接管旧 Electron 版；
 新增 /update /about /wizard 壳页；便携版改 zip 分发；Electron 链路冻结
-保留为可回退救生索；vnext 支线：全量 TS 隔离重构 + Rust 原生快照管理器 +
-main 主线 4.4.1–4.6.0 修复移植 + 4.4.x 升级适配）→
-5.1.0（main 主线：内核升级 0.1.1-rc.2 + picturereader 3.1.0 + unified-market
-资产基线 + 并发 web 检测/安全模式守卫/升级超时等修复）→
-6.0.0（本版：vnext × Tauri 统一合并 —— 全量 TS 模块基座（37 模块 ctx 注入）
-+ 插件隔离架构（extension-host + Rust Job Object 围栏）+ 快照管理器
-+ Windows/Linux 双平台编译分发（deb/AppImage）+ Electron 退役、Tauri 转正）→
+保留为可回退救生索）→
+5.1.0（压缩频发修复：截断不再强制 retain-0 全量压缩 + pressure 阈值 +
+15s/代际冷却；better-sidebar 抽搐/hero 截断/模型菜单翻转修复）→
+5.1.0 修复批次（内部代号 5.1.1，本版：窗口大小/位置记忆与副屏适配；临时会话「插件自带 Key」输入
+修复；computer-use 批准问答卡 + /computer 幂等批准；400 瞬态自愈与压缩
+误报护栏；移除内置「第三方模型思考强度」插件；手机连接桥（LAN 配对 +
+白名单 RPC，手机端占位）；内置鲸鱼余额挂件与 AgentTeams（均默认关闭）。
+版本号字段保持 5.1.0，不引 5.1.1 —— 与 R13 产物命名规则一致）→
+next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官方内核兼容范围，
+官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
+交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
-## [6.0.0] — 2026-08-24
+## 功能包体系（Feature Pack · 借鉴 HMCL 整合包架构）· next
 
-### 统一合并：vnext 重构基座 × Tauri 壳（merge/vnext-tauri）
-- **架构统一**：`refactor/vnext-ts-isolation`（全量 TS 37 模块、插件隔离、
-  Rust supervisor/snapshot、boot -79.8%、499 测试）与 `main`（Tauri 壳 +
-  Node sidecar、内核 0.1.1-rc.2、NSIS/便携打包链）按模块级择优映射合并：
-  实现取 refactor、宿主无关模式取 main ctx 注入，两支线成果完整保留。
-- **Electron 退役**：Tauri + WebView2 为唯一壳；插件隔离系统与快照管理器
-  迁移运行于 Node sidecar（宿主无关）；main.ts/preload/electron-builder
-  链路移除。
-- **双平台**：Windows（NSIS + 便携 zip）与 Linux（deb + AppImage）同批
-  编译与分发；Linux 进程围栏采用 PDEATHSIG + 进程组（对照 Windows
-  Job Object 语义）；Linux 升级走系统包管理器（沿用 v4.4.0-linux 约定）。
-- **内核与资产**：dsh 内核 0.1.1-rc.2；资产基线统一（picturereader 3.1.0、
-  unified-market、file-drop-eac 等）。
-- **main 修复全量移植**：并发 dsh web 检测（#22）、安全模式守卫、
-  schemastery 首启依赖、profile 完整性、可选升级字段、更新停滞超时 300s、
-  托盘完全重启等 11 项。
+### 功能包（.dshpack）：插件 + 预设 + 技能打包分发
 
-## [5.0.0 · vnext 支线] — 2026-08-21
+- **新格式与规范**：`.dshpack`（zip）＝ `pack.json` 清单 + 可选 `payload/`
+  （内嵌 preset/skills）+ `icon.png`；清单声明 `requires.dsh`（官方内核 semver
+  兼容范围）、`plugins[]`（builtin:/github:/npm 声明式引用，安装时解析，不内嵌
+  插件代码，来源可追溯）、`presets[]`、`skills[]`、`conflicts[]`。
+  规范与 JSON Schema：`docs/feature-pack-spec.md`、`docs/schemas/feature-pack-pack.json`。
+- **L2 核心引擎**（`lib/desktop/feature-pack.ts`，壳无关纯 Node）：
+  清单解析/校验、`matchSemverRange`（支持 `^ ~ x 部分版本 || 空格 &&` 与
+  预发布宽容——适配 `0.1.1-rc.x` 内核命名）、注册表
+  （`DSH_HOME/feature-packs/registry.json`，原子写）、内核版本探测、
+  安装/卸载/更新/导出/回滚编排（事务化：保护中心快照 → 装配 → 失败回滚；
+  `dsh plugin` 前后复用 artifact-keep 保护第三方构建产物；preset/skills 沿用
+  skip-if-exists，用户自建同名永不覆盖；卸载只拆本包登记物+引用计数）；
+  启动兼容扫描：官方内核版本变化自动把失配包置 `incompatible`（幂等）。
+- **功能包 CLI**（`scripts/feature-pack-cli.ts`）：
+  `inspect/list/install/update/uninstall/export/rollback/scan/resume`；
+  退出码 0/1/2/3/4/5（3=文件锁待排队、4=兼容失配、5=冲突阻断）；URL 安装 +
+  `--sha256` 校验；撞文件锁自动写入 `feature-packs/.ops/pending.json`，
+  sidecar 在无锁窗口（启动/重启前）经 `resume` 自动续跑。
+- **市场插件集成**（`dsh-unified-market`，SELF_VERSION 0.2.1 → 0.3.0）：
+  - host：`pack.list/inspect/install/uninstall/update/export/rollback/scan/market`
+    方法（spawn CLI + 复用 op 串行/轮询/超时；`pack.market` 索引 live→缓存→
+    内置 `data/packs-snapshot.json` 离线快照三级降级；上传文件 op 结束自动清理）；
+  - client：设置页新增「📦 功能包」tab —— 已安装列表（版本/兼容徽标/更新/导出/
+    卸载）、本地导入 `.dshpack`（文件选择→base64→安装）、功能包市场浏览一键安装、
+    官方内核升级后不兼容包提示条 + 「迁移（选新版）」/「回滚（保护中心快照）」；
+  - CLI 定位经 sidecar 注入的 `DSH_DESKTOP_RESOURCE_ROOT`（proc.ts childEnv）。
+- **打包与验证**：`electron-builder` 清单补 `lib/desktop/feature-pack.js` 与
+  `scripts/feature-pack-cli.js`；`unzipper` 移入 dependencies（CLI 运行时依赖）；
+  新增 `test/feature-pack.test.ts`（14 项：semver 全分支/校验/注册表/装卸往返/
+  用户保护/兼容扫描/导出/CLI）。
 
-### 同步：main 主线 4.4.1–4.6.0 更新与 bug 修复（TS 架构移植）
-- **更新链路修复（#112/#119）**：GitHub Release 代理优先链
-  （`gh.geekertao.top` → 原地址 → Gitee 兜底）；代理地址附加缓存破坏参数
-  `?v=<版本>&sha256=<哈希>`（期望哈希下载前求一次，同时喂代理 URL 与
-  下载后强校验）；`compareVersions` 补齐缺省版本段 + 兼容 `v` 前缀
-  （4.4 与 4.4.0 相等，修复重复提示安装）。
-- **安装版更新黑窗/自杀修复（#93）**：改用隐藏 PowerShell 助手脚本
-  （`-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden`）——精确等待
-  主进程 PID（上限 20s，超时只杀该 PID、不再 taskkill /T 全树）后再执行
-  ActionScript 备份/安装/回滚链；`apply-update.cmd` 不再含
-  ping/tasklist/find/taskkill，杜绝黑窗闪烁与「杀掉自己」的中断事故。
-- **首次安装崩溃根治（#119）**：`healRowConfig` 自愈改为扫描整个条目块
-  （块内任意位置已有 `config:` 即不再补），修复 `name → disabled → config`
-  形态被误判补出第二份 config → YAML duplicated mapping key → 启动失败。
-- **桌面快捷方式去重（#91）**：新增 `lib/shortcut-maintenance.ts`（单一
-  创建者原则：安装版归 NSIS、便携版归运行时），跨创建者重复项自动清理，
-  用户改过名/图标/参数的快捷方式永不删除。
-- **退役插件清理加固（#130 相关）**：`plugin-manager-patch` 识别 dsh 官方
-  「空块项+独立 id」多行 patch 格式；BOM / CRLF 容错（Windows PowerShell
-  写出的 patch 首字节 BOM 不再导致条目识别失败）。
-- **e2e 修复**：有真实 API key 时强制隔离测试 home 的
-  `agent-default-model` 指向 deepseek 官方端点；识图链路检查迁移到
-  picturereader；node 泄漏检查排除 `E2E_RUNNER_PID`。
-- **便携版产物名带版本**：`Deepseek-Harness-EAC-Portable-v<version>-x64.exe`
-  （与 Setup 同形态；release.yml 上传通配 `Portable-*.exe`）。
-- **测试同步**：新增 `client-updater-proxy`（代理/缓存破坏 9 项）、
-  `updater-version`（版本比较 2 项）；更新 `client-updater-node-arg`
-  （PowerShell 助手断言）、`update-mirror-chain`（Windows EPERM 重试）；
-  `plugin-manager-toggle` +4（dash 格式/BOM/CRLF）、`patch-row-heal` +4
-  （条目块扫描回归）；移除已退役 tool-vision 的 stream-guard 测试。
-- **文档同步**：README/README.en 下载链接改版本化命名（v5.0.0）、
-  Linux v4.4.0 包链接、picturereader 替换 tool-vision/tdai-memory 描述、
-  贡献者网格 + 交流群二维码（QQ/微信）。
+## 5.1.0 修复批次（内部代号 5.1.1）· 2026-08-27
 
-### 适配：main 主线（≤4.6.0 旧 JS 布局）升级到本版，.dsh 插件与配置零丢失
-- 版本号 4.4.0 → **5.0.0**：必须高于 main 主线最后版本 4.6.0，
-  老客户端的 compareVersions 才会判定「有新版本」并触发更新。
-- NSIS 产物命名对齐 origin/main 4.6.0：`Deepseek-Harness-EAC-Setup-v<version>-x64.exe`
-  （v4.4.1 起的命名形态）。老更新器的直连正则 `/setup.*x64\.exe$/i`
-  与 Gitee 分片候选（v4.4.1 起第 4 候选）都能命中；便携版同形态带版本
-  （`Portable-v<version>`，解压缓存目录名由固定字符串决定、与产物名无关）。
-- selectAsset 补回 Gitee 分片第 4 候选 `Deepseek-Harness-EAC-<kind>-v<version>-x64.exe`
-  （origin/main v4.4.1 commit 0178672 引入，重构迁移时丢失）：否则本版
-  自身命名在 Gitee >100MB 分片形态下永远匹配不上，5.x → 更新会卡死在
-  「未找到匹配的安装包资产」。
-- installer.nsh 新增 customInstall 残留清理：幂等删除 main 旧布局独有、
-  vnext 不再随包的 `rescue-agent.js` / `wsl-backend.js` / `extract-css.mjs`
-  （仅 `resources\app` 内，对不存在文件静默成功）。
-- release.yml 上传路径通配化 `Setup-*.exe`（带版本名）。
-- 数据零丢失保障：`.dsh`（全部插件/配置/skills）在 `%USERPROFILE%`、
-  settings.json 在 userData，安装器删除动作均不触碰；settings 采用
-  读-改-写全量合并，main 版写入的未知字段升级后完整保留。
-- 契约测试 `test/upgrade-contract.test.ts`（10 项）：版本门槛、双命名
-  契约（老/新更新器 × 直连/分片）、残留清理、.dsh 不可触碰、发布上传
-  面全部锁死，防回归。
+### 窗口：最小尺寸下调 + 大小/位置记忆（副屏适配）
 
-### 新增：Rust 原生快照管理器（.dsh 增量备份/恢复）
-- Rust napi 引擎（`native/snapshot/`）：SHA-256 内容寻址去重、
-  mtime+size 索引缓存、分支树、带安全快照的恢复；默认排除
-  skills/sessions/.agent-presets/memories/node_modules（可自定义）。
-- TS 编排（`lib/snapshot/`）+ IPC 域 `snapshot:*` + 全屏备份树面板
-  （⋯ 菜单「重启 Web 服务」与「重新加载」之间）：分支创建、快照恢复、
-  立即备份、定时备份（间隔/每日模式）；备份存于 `.dsh-snapshots`
-  （.dsh 同级）。
+- 主窗最小尺寸 960×640 → **800×560**；首启尺寸按当前显示器工作区收敛
+  （不再固定 1400×900，窄副屏不再显示不全）。
+- 新增窗口状态持久化（`app_config_dir/window-state.json`）：关闭/移动/缩放
+  自动保存（800ms 节流 + 退出兜底），重启恢复尺寸、位置与最大化状态；
+  恢复时校验落在某显示器工作区内，越界自动 clamp（拼接屏拔插/分辨率变化
+  不再把窗口甩出屏幕）。
 
-## [5.0.0 · main 主线] · 2026-08-23
+### 临时会话：模式 2「插件自带 Key」输入修复
+
+- 重写侧边临时会话设置卡的 API Key / 模型 / 基址输入：草稿本地化 + 编辑中
+  快照回写不再覆盖正在输入的值；模式切换后字段按最新已存配置重新填充；
+  Key 落盘（settings.yaml，role(secret) 不回显）后显示「已保存」占位，
+  空串不再覆盖已存 Key；回车/失焦即存，卸载兜底写回。
+
+### computer-use：批准问答卡 + 幂等批准
+
+- 手动批准模式不再只抛错误：优先走官方「批准问答」（对话内弹出 允许/拒绝
+  卡，host approval 服务 + 客户端 PendingApproval 卡），允许本次放行；
+  拒绝/取消/服务不可用时给出一致提示并可回落 `/computer`。
+- `/computer` 由「开关」改为**幂等批准**（重复发送不误撤销；`/computer 撤销`
+  才撤销）——此前第二次输入会把第一次的批准悄悄撤掉，表现为「批准了但没
+  生效」。
+
+### 400 瞬态自愈 + 压缩误报护栏（dsh-compact）
+
+- **溢出误报护栏**：供应商报 CONTEXT_WINDOW_EXCEEDED 但实测 tokens 远低于
+  窗口一半时，判定为供应商侧误报——不压缩、不重试，原样保留 400 详情
+  （此前免费服务商一次 400 就把整个会话历史无谓压掉）。
+- **瞬态 400 自愈**：非溢出的 400（INVALID_REQUEST）且本会话此前已有成功
+  回答时，自动原样重试一次（60s 内最多 2 次），自动复现「继续说一句才好」；
+  设置页可关（`retryTransientBadRequest`，支持按模型覆盖）。
+- 400 失败详情（供应商响应体摘要）写入 harness.log，不再「莫名其妙」。
+
+### 移除内置「第三方模型思考强度」插件
+
+- 按用户要求移除 `dsh-third-party-thinking`（reasoning_effort 控件）：
+  目录删除 + COMPANION_PLUGINS 摘除 + onboarding 列表移除；存量 profile
+  的 patch 行/包副本由 `RETIRED_BUILTIN_PLUGINS` 退役清理兜底。
+
+### 手机连接桥（接口预留，手机端开发中）
+
+- sidecar 新增 `phone-bridge`（Tauri 壳）：0.0.0.0 LAN HTTP，一次
+  5min TTL 配对 token（timingSafeEqual）+ 桌面端批准（仅回环）+ 一年期
+  `dsh_mobile` cookie（HttpOnly + SameSite=Strict）+ 白名单 RPC 转发
+  （9 项会话/模型/工作区动作，`/api/rpc`）；手机访问显示「开发中」占位页
+  （保留 PWA meta 与接入点）；断开即轮换 token 使手机端失效。
+- 新增内置插件 `dsh-phone`：设置页「连接手机」——二维码（内置
+  qrcode-generator）、配对状态、批准/拒绝/断开。
+- 已分析上游 dsh-desktop「手机能力」本质：扫码配对 + 白名单 RPC 续聊桥，
+  **非** scrcpy 类屏幕远控。
+
+### 内置插件两枚（均默认关闭，用户自行开启）
+
+- `dsh-whale-widget`（MeteorNOX/DeepSeek-Balance-Whale-Widget，MIT）：
+  DeepSeek 余额小鲸鱼挂件（余额/今日已用/每轮消耗，右下角常驻）。
+- `@nanmicoder/dsh-agent-teams`（MIT）：多智能体团队协作（队长/子代理/
+  依赖任务 DAG/活动面板）。
+
+### 验证
+
+- `npm test` 全量 **724 用例 719 通过 0 失败**（新增压缩护栏、computer-use
+  批准流、手机桥、注册表/契约测试 20+ 项）；Tauri 壳 `cargo check` 通过；
+  stage-resources → tauri build → make-portable 打包链路复验。
+
+## 5.1.0 修复批次（内部代号 5.1.2，本版：主窗最小尺寸可配置化）· 2026-08-27
+
+### 窗口：最小尺寸可配置化（默认降至 480×360）
+
+- 主窗允许的最小逻辑尺寸由硬编码 800×560 改为 **480×360**（与浮窗下限一致），
+  副屏/便携屏上可继续缩小到习惯尺寸（如 480×360）而不显示不全。
+- 支持环境变量覆盖，无需改代码重新编译：
+  - `DSH_WINDOW_MIN_W` / `DSH_WINDOW_MIN_H`：主窗最小逻辑尺寸；
+  - `DSH_WINDOW_W` / `DSH_WINDOW_H`：无记忆首启时的默认逻辑尺寸（默认
+    1400×900）。
+  - 非法值（非数值 / ≤0 / 非有限）自动回退默认；所有数值按逻辑像素解释，
+    100% 缩放下与像素一致。
+- 配置/记忆得到的下限若超过目标显示器 work area（极窄屏），以 work area
+  收敛为实际下限 —— 窗口始终能完整显示；恢复记忆时已保存的窄尺寸不再被
+  OS 下限弹回放大（此前 800px 下限会让窄屏窗口强制回到 800 宽）。
+
+## [5.0.0] · 2026-08-23
 
 ### 新增：设置面板滚轮修复插件
 

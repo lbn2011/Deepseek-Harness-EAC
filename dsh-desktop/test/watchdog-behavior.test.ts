@@ -102,7 +102,7 @@ test('pid gone without marker → relaunches the exe, then stops at the restart 
   // Use a harmless real executable that exits immediately on the host platform.
   const exe = process.platform === 'win32'
     ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ping.exe')
-    : '/bin/true';
+    : process.platform === 'darwin' ? '/usr/bin/true' : '/bin/true';
   assert.ok(existsSync(exe), 'harmless relaunch executable not found');
   const { log } = await runUntilLog({
     pid: '999999',

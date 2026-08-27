@@ -7,13 +7,14 @@
 //   staged-resources/dsh-desktop/<旧壳时代的精确文件清单 + 生产 node_modules
 //                              + assets + vendor/node + vendor/npm>
 //
-// 用法：node stage-resources.mjs [--target=win32|linux] [--skip-npm]
+// 用法：node stage-resources.mjs [--target=win32|linux|darwin] [--skip-npm]
 
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
+import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dd = path.join(root, 'dsh-desktop');
@@ -21,7 +22,7 @@ const staged = path.join(root, 'tauri-shell', 'staged-resources');
 const skipNpm = process.argv.includes('--skip-npm');
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='));
 const targetPlatform = targetArg ? targetArg.slice('--target='.length) : process.platform;
-if (targetPlatform !== 'win32' && targetPlatform !== 'linux') {
+if (targetPlatform !== 'win32' && targetPlatform !== 'linux' && targetPlatform !== 'darwin') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
 
@@ -231,7 +232,7 @@ console.log('[stage] 编译 TypeScript（tsc 就地产物）');
 execSync('npx tsc -p tsconfig.json', { cwd: dd, stdio: 'inherit' });
 
 console.log('[stage] sidecar 产物');
-for (const f of ['server.js', 'bridge.js', 'ping.js', 'rescue-integration.js', 'ipc-surface.js']) {
+for (const f of ['server.js', 'bridge.js', 'ping.js', 'rescue-integration.js', 'ipc-surface.js', 'phone-bridge.js']) {
   cpSync(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f));
 }
 for (const f of SIDECAR_UI_FILES) {
@@ -299,6 +300,15 @@ if (targetPlatform === 'linux') {
     path.join(nmDest, '@koromix', 'koffi-linux-x64', 'musl_x64'),
     { recursive: true, force: true },
   );
+}
+if (targetPlatform === 'darwin') {
+  console.log('[stage] 移除 Darwin 不可达的 Windows/Linux payload');
+  rmSync(path.join(staged, 'dsh-desktop', 'assets', 'plugins', 'computer-user'), { recursive: true, force: true });
+  rmSync(path.join(staged, 'dsh-desktop', 'assets', 'plugins', 'dsh-dafeiyu'), { recursive: true, force: true });
+  rmSync(path.join(staged, 'dsh-desktop', 'assets', 'agent-presets'), { recursive: true, force: true });
+  pruneDarwinPayloads(path.join(staged, 'dsh-desktop', 'assets'));
+  pruneNonDarwinPrebuilds(nmDest);
+  pruneDarwinPayloads(nmDest);
 }
 // node-pty 双二进制防护（issue #206）：全平台统一执行（Linux 分支已清除
 // 非 linux prebuilds，win 分支保留原 prebuilds）。

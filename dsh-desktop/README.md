@@ -154,8 +154,10 @@
 | `@vlln/dsh-navbar`（v4） | 对话节点导航条：右缘节点串快速跳转 user 消息（悬停预览/点击跳转/滚轮切换） | 随包自动启用 |
 | `@deepseek-ai/dsh-conversation-tweaks`（v4） | 对话微调：隐藏大量工具调用/结果/思考输出，保留每轮最终总结 | 设置 → 通用 |
 | `@deepseek-ai/dsh-prompt-custom`（v4） | 自定义注入提示词：整体替换/追加官方 persona | 设置 → 提示词 |
-| `@deepseek-ai/dsh-third-party-thinking`（v4） | 第三方 OpenAI 兼容模型的 reasoning_effort 控件（字段名可自定义） | 模型参数区 |
 | `dsh-offpeak`（v4） | 峰谷价格卫士：高峰时段（北京时间 9-12 / 14-18 点）发送前拦截提醒，一键继续或定时到闲时价自动执行（浏览器不在线也执行） | 发送时弹窗（「插件 → 管理」可关闭） |
+| `dsh-phone`（5.1.0 批次） | 手机连接：LAN 扫码配对 + 白名单 RPC 桥（设置页「连接手机」），手机端客户端开发中（占位页），接口已预留 | 设置 → 连接手机 |
+| `dsh-whale-widget`（5.1.0 批次） | DeepSeek 余额小鲸鱼挂件：右下角常驻余额/今日已用/每轮消耗（默认关闭，需 DEEPSEEK_API_KEY） | 设置 → 插件 → 管理（默认关闭） |
+| `@nanmicoder/dsh-agent-teams`（5.1.0 批次） | 多智能体团队协作：队长 + 子代理成员 + 依赖感知任务 DAG + 活动面板（默认关闭，由用户自行开启） | 设置 → 插件 → 管理（默认关闭）+ `/agent-teams` |
 
 > **Windows 文件锁排队**：运行中的 Web 服务加载着原生模块（sqlite-vec 等 DLL）时，插件安装/卸载会遇到 `EPERM` 文件锁 —— 任务会自动排队（`.dsh-market-pending.json`），下次服务重启前（无锁窗口）自动完成，市场界面提供「立即重启并完成」按钮。
 >

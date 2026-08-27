@@ -23,6 +23,7 @@ const ModelPolicy = Schema.object({
   retainRatio: Schema.number().min(0.05).max(0.5).step(0.01),
   recoverOnOverflow: Schema.boolean(),
   maxOverflowRetries: Schema.union([Schema.const(0), Schema.const(1)]),
+  retryTransientBadRequest: Schema.boolean(),
 })
 
 export const Config = Schema.object({
@@ -35,6 +36,8 @@ export const Config = Schema.object({
     .description('上下文溢出后压缩并重试原请求'),
   maxOverflowRetries: Schema.union([Schema.const(0), Schema.const(1)])
     .default(DEFAULT_CONFIG.maxOverflowRetries).description('单轮溢出恢复次数'),
+  retryTransientBadRequest: Schema.boolean().default(DEFAULT_CONFIG.retryTransientBadRequest)
+    .description('非溢出的 400 瞬态错误（会话此前成功过）自动重试一次'),
   modelPolicies: Schema.array(ModelPolicy).default([]).description('provider/model 专属策略'),
 }).description('DSH 请求路径上下文压缩')
 
