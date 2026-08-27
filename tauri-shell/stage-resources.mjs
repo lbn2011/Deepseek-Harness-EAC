@@ -342,10 +342,10 @@ rmSync(
 
 console.log('[stage] 完成：' + staged);
 
-// WebView2Loader.dll：webview2-com-sys 提供的 x64 loader，必须与壳 exe 同级
-// （否则 dsh-eac-shell.exe 启动即 0xC0000135 崩）。从 cargo registry 的
-// webview2-com-sys 包定位（tauri build 不再重新生成该文件）。
-{
+// WebView2Loader.dll：仅 Windows 需要（webview2-com-sys 提供的 x64 loader，
+// 必须与壳 exe 同级，否则 dsh-eac-shell.exe 启动即 0xC0000135 崩）。从
+// cargo registry 的 webview2-com-sys 包定位（tauri build 不再重新生成）。
+if (targetPlatform === 'win32') {
   const loader = (() => {
     const homeDir = process.env.USERPROFILE || process.env.HOME || '';
     const roots = [
