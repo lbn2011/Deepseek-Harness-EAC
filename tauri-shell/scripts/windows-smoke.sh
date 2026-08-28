@@ -17,23 +17,24 @@ echo "== S1 NSIS 静默安装 =="
 SETUP=$(find "$ART" -maxdepth 2 -name '*.exe' | head -1)
 [ -n "$SETUP" ] || { echo "FAIL: 未找到 NSIS 安装包（$ART）"; exit 1; }
 echo "  setup: $SETUP"
-# 安装器在 CI 无头会话可能挂起（downloadBootstrapper 检测 + bzip2 解压慢，
-# 实测 23min 未返回）。策略：先试静默安装（120s 超时），失败则 7z 解包兜底
-# （NSIS 安装包可解包，解包树与安装树同构，S2/S3 照跑）。
+# 安装器在 CI 无头会话挂起的历史原因：
+#   1) Git Bash 直接执行 .exe /S —— MSYS 参数转换可能改写 /S（安装器没进
+#      静默模式 → GUI 打开 → 无头会话无交互 → 挂起）；
+#   2) webviewInstallMode=downloadBootstrapper 的检测在无头会话可能卡。
+# 改用 PowerShell Start-Process（参数原样 + -Wait 等退出），再失败则
+# 7z 解包兜底（NSIS 包可解包，解包树与安装树同构，S2/S3 照跑）。
 EXE=""
 WORK=""
-timeout 120 "$SETUP" /S || {
-  echo "  install timeout/failed（exit $?）—— 转 7z 解包兜底"
-}
-if [ -z "$EXE" ]; then
-  # 静默安装已尝试（120s）；轮询安装结果
+WIN_SETUP=$(cygpath -w "$SETUP" 2>/dev/null || echo "$SETUP")
+timeout 150 powershell -NoProfile -Command "Start-Process -FilePath '$WIN_SETUP' -ArgumentList '/S' -Wait" && {
   for _ in $(seq 1 30); do
     EXE=$(find "$LOCALAPPDATA" -name 'dsh-eac-shell.exe' 2>/dev/null | head -1)
     [ -n "$EXE" ] && break
     sleep 2
   done
-fi
+}
 if [ -z "$EXE" ]; then
+  echo "  静默安装未完成 —— 转 7z 解包兜底"
   # 解包兜底：7z 支持 NSIS 格式；windows runner 自带 7-Zip
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/dsh-nsis.XXXXXX")
   SEVENZ="/c/Program Files/7-Zip/7z.exe"
