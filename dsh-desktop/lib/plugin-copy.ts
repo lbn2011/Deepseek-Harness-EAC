@@ -258,4 +258,43 @@ export function copyPluginPackage(profileDirP: string, src: string, name: string
       /* 戳记写失败不影响功能 */
     }
   }
+  copyMissingPeerDeps(profileDirP, destRoot);
+}
+
+// 拷贝装配无 pnpm peer 解析：插件树的 peerDependencies 依赖需从内核层
+// （<profiles>/node_modules，含 dsh 全家桶 + react）补齐，否则 client
+// loader require peer 包会 miss 模块表（如 dsh-third-party-thinking 缺
+// @deepseek-ai/dsh-client-web-react 导致启动白屏）。只补「插件树缺失且
+// 内核层存在」的 peer，不递归（peer 的 peer 由内核层扁平安装兜底）。
+function copyMissingPeerDeps(profileDirP: string, destRoot: string): void {
+  try {
+    const srcPkg = readJsonFile(path.join(destRoot, 'package.json'));
+    if (!srcPkg || typeof srcPkg.peerDependencies !== 'object' || srcPkg.peerDependencies === null) return;
+    const peers = Object.keys(srcPkg.peerDependencies as Record<string, unknown>);
+    if (peers.length === 0) return;
+    const pluginNodeModules = path.join(profileDirP, 'node_modules');
+    const coreNodeModules = path.join(path.dirname(profileDirP), 'node_modules');
+    for (const name of peers) {
+      const rel = name.split('/').join(path.sep);
+      const target = path.join(pluginNodeModules, rel);
+      if (fs.existsSync(path.join(target, 'package.json'))) continue; // 插件树已有
+      const src = path.join(coreNodeModules, rel);
+      if (!fs.existsSync(path.join(src, 'package.json'))) continue; // 内核层也没有
+      copyDirTree(src, target);
+    }
+  } catch (err) {
+    // peer 补拷失败不阻断插件装配（如目标被占），日志由调用方捕获。
+    console.error('[plugin-copy] copyMissingPeerDeps failed: ' + String((err as Error).message));
+  }
+}
+
+/** 递归拷贝一个目录树（peer 包整体拷贝，含 stamp 无要求）。 */
+function copyDirTree(src: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) copyDirTree(s, d);
+    else if (entry.isFile()) fs.copyFileSync(s, d);
+  }
 }

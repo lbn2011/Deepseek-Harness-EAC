@@ -101,6 +101,11 @@ export const RETIRED_BUILTIN_PLUGINS: { id: string; name: string }[] = [
   // tdai-memory：唯一携带 node_modules 的内置插件，v4.5 起退役 —— 体积
   // ~310MB 占安装包近半，且 vendor 任一小缺失即 import 失败拖垮插件树。
   { id: 'tdai-memory', name: 'dsh-tdai-memory' },
+  // third-party-thinking：上游 main 已删该插件目录（2026-08 合并同步），
+  // 且其 peerDependencies 含 @deepseek-ai/dsh-client-web-react（拷贝装配
+  // 不解析 peer，老安装的 builtinPluginSelection 残留会让 client loader
+  // miss 模块表 → 启动白屏）。登记退役让 boot 自动清 patch 行 + 包副本。
+  { id: 'third-party-thinking', name: '@deepseek-ai/dsh-third-party-thinking' },
   // main v4.6 退役批次（2.5 并入）：auto-compact 由 dsh-compact 复合 agent
   // 接替；其余三个市场类插件随 unified-market 收敛移除。老安装（main 线
   // 升级上来）profile 里残留的 patch 行/包副本由 retireRemovedBuiltinPlugins
