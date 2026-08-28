@@ -2,7 +2,8 @@
 # Linux 产物冒烟（Task 11.3 / AC-8）：在干净 ubuntu:24.04 容器内验证——
 #   L1 AppImage --appimage-extract 提取树关键路径断言（无 FUSE）
 #   L2 deb dpkg -i 安装 / dpkg -L 关键路径 / dpkg -r 卸载干净
-#   L3 sidecar boot 探活（vendored node 直启 server.js → boot.start → HTTP 200）
+#   L3 启动测试（进入对话界面）：vendored node 直启 server.js → boot.start
+#      → HTTP 首页 200 + 完整 HTML + 对话标记（chat/#app 等）
 #
 # 用法（容器内）：bash /scripts/linux-smoke.sh /a [/scripts]
 #   /a        = 挂载的产物目录（含 *.AppImage / *.deb）
@@ -46,7 +47,10 @@ dpkg -r "$PKG" >/dev/null
 if dpkg -l "$PKG" 2>/dev/null | grep -q '^ii'; then echo "FAIL: 卸载残留 $PKG"; exit 1; fi
 echo "L2 PASS"
 
-echo "== L3 sidecar boot 探活 =="
+echo "== L3 启动测试（进入对话界面）=="
+# 与 Windows 冒烟 S3 同一探活：vendored node 直启 sidecar/server.js →
+# boot.start → HTTP 首页 200 + 完整 HTML + 对话标记（chat/#app 等），
+# 即应用「启动并进入对话界面」的服务端等价（WebView 加载同一页面）。
 NODE=$(find "$SROOT" -path '*/vendor/node/bin/node' -type f | head -1)
 SERVER=$(find "$SROOT" -path '*/sidecar/server.js' -type f | head -1)
 [ -n "$NODE" ] && [ -n "$SERVER" ] || { echo "FAIL: 未找到 vendored node 或 sidecar/server.js"; exit 1; }
