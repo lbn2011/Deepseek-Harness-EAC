@@ -172,7 +172,10 @@ jobs:
             bash -c '
               set -euo pipefail
               apt-get update -qq >/dev/null
-              apt-get install -y -qq libfuse2 ca-certificates >/dev/null
+              # Tauri v2 Linux 运行依赖（deb 安装依赖检查 / AppImage 冒烟用）：
+              # libfuse2（AppImage 提取）、libgtk-3-0 + libwebkit2gtk-4.1-0
+              # + libayatana-appindicator3-1 + librsvg2-2（deb 的 Depends 链）。
+              apt-get install -y -qq libfuse2 ca-certificates libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-2 >/dev/null
               bash /scripts/linux-smoke.sh /a /scripts
             '
 
