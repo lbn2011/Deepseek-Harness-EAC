@@ -14,31 +14,6 @@ import * as fs from 'node:fs';
 import * as cp from 'node:child_process';
 import * as readline from 'node:readline';
 import type { HostCtx, HostShortcutLink } from '../../dsh-desktop/lib/host-ctx.js';
-import { initHostCtx } from '../../dsh-desktop/lib/host-ctx.js';
-import { state, initVNextState } from '../../dsh-desktop/lib/state.js';
-import { setLogSink } from '../../dsh-desktop/lib/log.js';
-import { bridge } from '../../dsh-desktop/lib/bridge.js';
-import * as procMod from '../../dsh-desktop/lib/proc.js';
-import * as pathsMod from '../../dsh-desktop/lib/paths.js';
-import * as serverMod from '../../dsh-desktop/lib/server.js';
-import * as guardBoxMod from '../../dsh-desktop/lib/guard.js';
-import * as runtimePatchesMod from '../../dsh-desktop/lib/session-heal.js';
-import * as companionSyncMod from '../../dsh-desktop/lib/plugins.js';
-import { COMPANION_PLUGINS, pluginUpdateSources } from '../../dsh-desktop/lib/plugin-registry-data.js';
-import { copyPluginPackage } from '../../dsh-desktop/lib/plugin-copy.js';
-import * as pluginOpsMod from '../../dsh-desktop/lib/plugin-manager-core.js';
-import * as marketMod from '../../dsh-desktop/lib/market-ops.js';
-import * as shortcutsMod from '../../dsh-desktop/lib/shortcuts.js';
-import * as junctionPatrolMod from '../../dsh-desktop/lib/watchdog-boot.js';
-import * as clientUpdateMod from '../../dsh-desktop/lib/update-flow.js';
-import * as previewMod from '../../dsh-desktop/lib/preview.js';
-import * as fileRootsMod from '../../dsh-desktop/lib/paths.js';
-import * as recoveryCenter from '../../dsh-desktop/lib/recovery-center/register-sidecar.js';
-import * as extHost from '../../dsh-desktop/lib/extension-host/manager.js';
-import * as bridgeServer from '../../dsh-desktop/lib/extension-host/bridge-server.js';
-import { registerIpc } from '../../dsh-desktop/lib/ipc/index.js';
-import { setDefaultIpcSurface } from '../../dsh-desktop/lib/ipc/transport.js';
-import { createDesktopPlatform } from '../../dsh-desktop/lib/platform.js';
 import { createSidecarIpcSurface } from './ipc-surface.js';
 import * as rescueIntegration from './rescue-integration.js';
 
@@ -55,6 +30,38 @@ const DSH_DESKTOP_ROOT = process.env.DSH_RESOURCE_ROOT
   ? path.join(process.env.DSH_RESOURCE_ROOT, 'dsh-desktop')
   : resolveDesktopRoot();
 function say(s: string): void { process.stderr.write('[sidecar] ' + s + '\n'); }
+
+// ---- 业务模块动态加载 ------------------------------------------------
+// 打包态 sidecar/ 与 dsh-desktop/ 同级（安装根或 resources/ 下），静态相对
+// 路径 `../../dsh-desktop` 只对开发态（tauri-shell/sidecar → 仓库根）成立；
+// 统一经 DSH_DESKTOP_ROOT 运行时解析，保证任意布局下加载一致（并与其他
+// 模块共享 require 缓存，state 等单例不被复制）。
+const load = <T,>(m: string): T => require(path.join(DSH_DESKTOP_ROOT, 'lib', m)) as T;
+const { initHostCtx } = load<typeof import('../../dsh-desktop/lib/host-ctx.js')>('host-ctx.js');
+const { state, initVNextState } = load<typeof import('../../dsh-desktop/lib/state.js')>('state.js');
+const { setLogSink } = load<typeof import('../../dsh-desktop/lib/log.js')>('log.js');
+const { bridge } = load<typeof import('../../dsh-desktop/lib/bridge.js')>('bridge.js');
+const procMod = load<typeof import('../../dsh-desktop/lib/proc.js')>('proc.js');
+const pathsMod = load<typeof import('../../dsh-desktop/lib/paths.js')>('paths.js');
+const serverMod = load<typeof import('../../dsh-desktop/lib/server.js')>('server.js');
+const guardBoxMod = load<typeof import('../../dsh-desktop/lib/guard.js')>('guard.js');
+const runtimePatchesMod = load<typeof import('../../dsh-desktop/lib/session-heal.js')>('session-heal.js');
+const companionSyncMod = load<typeof import('../../dsh-desktop/lib/plugins.js')>('plugins.js');
+const { COMPANION_PLUGINS, pluginUpdateSources } = load<typeof import('../../dsh-desktop/lib/plugin-registry-data.js')>('plugin-registry-data.js');
+const { copyPluginPackage } = load<typeof import('../../dsh-desktop/lib/plugin-copy.js')>('plugin-copy.js');
+const pluginOpsMod = load<typeof import('../../dsh-desktop/lib/plugin-manager-core.js')>('plugin-manager-core.js');
+const marketMod = load<typeof import('../../dsh-desktop/lib/market-ops.js')>('market-ops.js');
+const shortcutsMod = load<typeof import('../../dsh-desktop/lib/shortcuts.js')>('shortcuts.js');
+const junctionPatrolMod = load<typeof import('../../dsh-desktop/lib/watchdog-boot.js')>('watchdog-boot.js');
+const clientUpdateMod = load<typeof import('../../dsh-desktop/lib/update-flow.js')>('update-flow.js');
+const previewMod = load<typeof import('../../dsh-desktop/lib/preview.js')>('preview.js');
+const fileRootsMod = load<typeof import('../../dsh-desktop/lib/paths.js')>('paths.js');
+const recoveryCenter = load<typeof import('../../dsh-desktop/lib/recovery-center/register-sidecar.js')>('recovery-center/register-sidecar.js');
+const extHost = load<typeof import('../../dsh-desktop/lib/extension-host/manager.js')>('extension-host/manager.js');
+const bridgeServer = load<typeof import('../../dsh-desktop/lib/extension-host/bridge-server.js')>('extension-host/bridge-server.js');
+const { registerIpc } = load<typeof import('../../dsh-desktop/lib/ipc/index.js')>('ipc/index.js');
+const { setDefaultIpcSurface } = load<typeof import('../../dsh-desktop/lib/ipc/transport.js')>('ipc/transport.js');
+const { createDesktopPlatform } = load<typeof import('../../dsh-desktop/lib/platform.js')>('platform.js');
 
 // ---- 宿主语义（对齐 legacy-shell main.js 的注入值） --------------------------
 const APP_NAME = 'Deepseek Harness EAC';

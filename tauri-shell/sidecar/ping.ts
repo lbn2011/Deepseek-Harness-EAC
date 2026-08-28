@@ -4,6 +4,7 @@
 // sidecar 承载统一 lib 业务模块；本文件演示协议与 L3 内核定位。
 
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import * as readline from 'node:readline';
 
 interface RpcMessage {
@@ -46,10 +47,15 @@ rl.on('line', (line: string) => {
     }
     if (method === 'dsh.probe') {
       // L2 → L3：定位随 dsh-desktop 分发的内核 CLI（零改动验证）。
+      // sidecar 与 dsh-desktop 同级的任意布局：upTwo 优先（开发态
+      // tauri-shell/sidecar → 仓库根），upOne fallback（打包态同级）。
       try {
-        // sidecar 位于 tauri-shell/sidecar/，dsh-desktop 是其祖父目录的兄弟。
+        const upTwo = path.resolve(__dirname, '..', '..', 'dsh-desktop');
+        const root = fs.existsSync(path.join(upTwo, 'package.json'))
+          ? upTwo
+          : path.resolve(__dirname, '..', 'dsh-desktop');
         const bin = require.resolve('@deepseek-ai/dsh/lib/bin.js', {
-          paths: [path.join(__dirname, '..', '..', 'dsh-desktop')],
+          paths: [root],
         });
         return respond({ jsonrpc: '2.0', id, result: { found: true, bin } });
       } catch (e) {

@@ -1,6 +1,21 @@
 import type { BridgeSession } from '../../dsh-desktop/lib/host-ctx.js';
-import { state } from '../../dsh-desktop/lib/state.js';
 import type { IpcEvent, IpcSurface } from '../../dsh-desktop/lib/ipc/transport.js';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
+
+// 与 server.ts 一致的资源根解析（sidecar 与 dsh-desktop 同级的任意布局），
+// 动态 require 保证与 server.js 共享同一 state 单例。
+function resolveDesktopRoot(): string {
+  const upTwo = path.resolve(__dirname, '..', '..', 'dsh-desktop');
+  if (fs.existsSync(path.join(upTwo, 'package.json'))) return upTwo;
+  const upOne = path.resolve(__dirname, '..', 'dsh-desktop');
+  if (fs.existsSync(path.join(upOne, 'package.json'))) return upOne;
+  return upTwo;
+}
+const DSH_DESKTOP_ROOT = process.env.DSH_RESOURCE_ROOT
+  ? path.join(process.env.DSH_RESOURCE_ROOT, 'dsh-desktop')
+  : resolveDesktopRoot();
+const { state } = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'state.js')) as typeof import('../../dsh-desktop/lib/state.js');
 
 export type SidecarMethod = (params?: Record<string, unknown>) => unknown;
 

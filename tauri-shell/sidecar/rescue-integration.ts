@@ -26,9 +26,15 @@ type RescueFn = (...a: unknown[]) => unknown;
 const ra = (): Record<string, RescueFn> => rescueAgent as Record<string, RescueFn>;
 
 let H!: RescueHost;
+// 资源根解析（sidecar 与 dsh-desktop 同级时用一级 ../；开发态 tauri-shell/
+// sidecar → 仓库根用两级 ../../）。
 const DSH_DESKTOP_ROOT = process.env.DSH_RESOURCE_ROOT
   ? path.join(process.env.DSH_RESOURCE_ROOT, 'dsh-desktop')
-  : path.resolve(__dirname, '..', '..', 'dsh-desktop');
+  : (() => {
+      const upTwo = path.resolve(__dirname, '..', '..', 'dsh-desktop');
+      if (fs.existsSync(path.join(upTwo, 'package.json'))) return upTwo;
+      return path.resolve(__dirname, '..', 'dsh-desktop');
+    })();
 const rescueAgent: Record<string, unknown> = require(path.join(DSH_DESKTOP_ROOT, 'rescue-agent.js')) as Record<string, unknown>;
 const RA_OPTS = rescueAgent.DEFAULT_OPTS as unknown as { BOOT_FAILURE_THRESHOLD: number; MODEL: string; AI_TIMEOUT_MS: number };
 
