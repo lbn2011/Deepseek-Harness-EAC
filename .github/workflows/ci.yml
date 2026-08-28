@@ -179,3 +179,23 @@ jobs:
               bash /scripts/linux-smoke.sh /a /scripts
             '
 
+  windows-smoke:
+    name: Windows 产物冒烟（NSIS 安装 + 对话界面启动）
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码（取冒烟脚本）
+        uses: actions/checkout@v4
+
+      - name: 下载 Windows 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: dsh-eac-windows-x64-ci
+          path: artifacts
+
+      - name: 冒烟（NSIS 静默安装 → 安装树探活 → 对话界面）
+        shell: bash
+        run: |
+          bash tauri-shell/scripts/windows-smoke.sh "$PWD/artifacts" "$PWD/tauri-shell/scripts"
+

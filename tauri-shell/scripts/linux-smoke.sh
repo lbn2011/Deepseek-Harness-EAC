@@ -34,8 +34,13 @@ echo "== L2 deb 安装/卸载 =="
 DEB=$(find . -maxdepth 2 -name '*.deb' | head -1)
 [ -n "$DEB" ] || { echo "FAIL: 未找到 deb"; exit 1; }
 PKG=$(dpkg-deb -f "$DEB" Package)
-dpkg -i "$DEB" >/dev/null
-dpkg -L "$PKG" | grep -qE 'dsh-eac-shell|sidecar/server\.js' || { echo "FAIL: deb 安装树缺关键路径"; exit 1; }
+echo "  package: $PKG ($(dpkg-deb -f "$DEB" Version))"
+if ! dpkg -i "$DEB"; then echo "FAIL: dpkg -i 安装失败（依赖缺？）"; exit 1; fi
+if ! dpkg -L "$PKG" | grep -qE 'dsh-eac-shell|sidecar/server\.js'; then
+  echo "FAIL: deb 安装树缺关键路径 —— dpkg -L 输出："
+  dpkg -L "$PKG" | head -40
+  exit 1
+fi
 echo "  installed: $PKG"
 dpkg -r "$PKG" >/dev/null
 if dpkg -l "$PKG" 2>/dev/null | grep -q '^ii'; then echo "FAIL: 卸载残留 $PKG"; exit 1; fi

@@ -42,13 +42,24 @@ child.stdout.on('data', (d) => {
       const url = msg.result.webUrl;
       const ms = Date.now() - t0;
       console.log(`[sidecar-probe] boot.start ok in ${ms}ms → ${url}`);
-      http.get(url + '/', { timeout: 5000 }, (r) => {
-        r.resume();
-        console.log(`[sidecar-probe] probe status = ${r.statusCode}`);
-        clearTimeout(timer);
-        if (r.statusCode !== 200) fail(`HTTP ${r.statusCode}`);
-        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\n');
-        setTimeout(() => { console.log(`[sidecar-probe] PASS (${ms}ms)`); child.kill(); process.exit(0); }, 9000);
+      http.get(url + '/', { timeout: 10000 }, (r) => {
+        let body = '';
+        r.on('data', (c) => { body += c; });
+        r.on('end', () => {
+          clearTimeout(timer);
+          console.log(`[sidecar-probe] GET / → ${r.statusCode} (${body.length} bytes)`);
+          if (r.statusCode !== 200) { fail(`HTTP ${r.statusCode}`); return; }
+          // 对话界面验证（Task 11.3 增强）：首页必须是完整对话 UI，
+          // 而非空白/错误页。SPA 入口含 app 挂载点 + 聊天相关标记。
+          const lower = body.toLowerCase();
+          const ui = lower.includes('</html>') && body.length > 512;
+          const chatish = /chat|conversation|message|对话|#app|id="app"/i.test(body);
+          console.log(`[sidecar-probe] ui-html=${ui} chat-marker=${chatish}`);
+          if (body.length > 400) console.log('[sidecar-probe] html head: ' + body.slice(0, 400).replace(/\s+/g, ' '));
+          if (!ui || !chatish) { fail('首页未呈现对话界面（非完整 HTML 或缺聊天标记）'); return; }
+          child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\n');
+          setTimeout(() => { console.log(`[sidecar-probe] PASS (${ms}ms)`); child.kill(); process.exit(0); }, 9000);
+        });
       }).on('error', (e) => fail('probe error: ' + e.message));
     } else if (msg.id === 1 && msg.error) {
       fail('boot.start error: ' + JSON.stringify(msg.error));
