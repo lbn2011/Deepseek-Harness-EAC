@@ -11,7 +11,10 @@ set -euo pipefail
 
 ART="${1:-/a}"
 SCRIPTS="${2:-/scripts}"
-cd "$ART"
+# 产物挂载为只读（:ro）：先复制到容器可写工作目录，chmod/解包才能进行。
+WORK="$(mktemp -d /tmp/dsh-smoke.XXXXXX)"
+cp -a "$ART"/. "$WORK"/ 2>/dev/null || { echo "FAIL: 无法复制产物到工作目录"; exit 1; }
+cd "$WORK"
 
 echo "== L1 AppImage 提取 =="
 APPIMAGE=$(find . -maxdepth 2 -name '*.AppImage' | head -1)
