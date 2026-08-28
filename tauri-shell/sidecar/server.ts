@@ -65,8 +65,18 @@ const { createDesktopPlatform } = load<typeof import('../../dsh-desktop/lib/plat
 
 // ---- 宿主语义（对齐 legacy-shell main.js 的注入值） --------------------------
 const APP_NAME = 'Deepseek Harness EAC';
-const appDataDir = path.join(os.homedir(), 'AppData', 'Roaming');
+// 平台感知的应用数据目录：Windows 用 APPDATA 布局，Linux/macOS 用 XDG 布局。
+// 硬编码 AppData/Roaming 会让 Linux 容器（L3 冒烟）把 userDataDir 算成
+// /root/AppData/Roaming/...（不存在）→ spawn 内核 cwd 无效 → ENOENT。
+const IS_WIN_HOST = process.platform === 'win32';
+const appDataDir = IS_WIN_HOST
+  ? process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
+  : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 const userDataDir = path.join(appDataDir, APP_NAME);
+// 确保 userDataDir 存在（settings.json / dsh-web.log / spawn 内核的 cwd
+// 都依赖它；Linux 容器全新环境无该目录，缺了 saveSettings ENOENT 且
+// spawn cwd 无效 → ENOENT）。
+try { fs.mkdirSync(userDataDir, { recursive: true }); } catch { /* 兜底忽略 */ }
 const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 const log = (tag: string, msg: string): void => say('[' + tag + '] ' + msg);
 

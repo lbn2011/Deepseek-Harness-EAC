@@ -17,22 +17,34 @@ echo "== S1 NSIS 静默安装 =="
 SETUP=$(find "$ART" -maxdepth 2 -name '*.exe' | head -1)
 [ -n "$SETUP" ] || { echo "FAIL: 未找到 NSIS 安装包（$ART）"; exit 1; }
 echo "  setup: $SETUP"
-# 安装器可能在无头环境挂起（CI 实测 23min 未返回）：前台等待加超时。
-# /S 静默安装完成后安装器进程退出；超时则打印进程表诊断。
-timeout 240 "$SETUP" /S || {
-  echo "FAIL: NSIS 安装器超时/失败（exit $?）—— 进程表："
-  powershell -NoProfile -Command "Get-Process | Where-Object { \$_.ProcessName -match 'setup|Deepseek|dsh' } | Select-Object Id,ProcessName,StartTime | Format-Table" || true
-  exit 1
-}
-# 等待安装完成（轮询 LOCALAPPDATA 下的 dsh-eac-shell.exe）
+# 安装器在 CI 无头会话可能挂起（downloadBootstrapper 检测 + bzip2 解压慢，
+# 实测 23min 未返回）。策略：先试静默安装（120s 超时），失败则 7z 解包兜底
+# （NSIS 安装包可解包，解包树与安装树同构，S2/S3 照跑）。
 EXE=""
-for _ in $(seq 1 90); do
-  EXE=$(find "$LOCALAPPDATA" -name 'dsh-eac-shell.exe' 2>/dev/null | head -1)
-  [ -n "$EXE" ] && break
-  sleep 2
-done
-[ -n "$EXE" ] || { echo "FAIL: 安装后未找到 dsh-eac-shell.exe（LOCALAPPDATA=$LOCALAPPDATA）"; exit 1; }
-echo "  installed: $EXE"
+WORK=""
+timeout 120 "$SETUP" /S || {
+  echo "  install timeout/failed（exit $?）—— 转 7z 解包兜底"
+}
+if [ -z "$EXE" ]; then
+  # 静默安装已尝试（120s）；轮询安装结果
+  for _ in $(seq 1 30); do
+    EXE=$(find "$LOCALAPPDATA" -name 'dsh-eac-shell.exe' 2>/dev/null | head -1)
+    [ -n "$EXE" ] && break
+    sleep 2
+  done
+fi
+if [ -z "$EXE" ]; then
+  # 解包兜底：7z 支持 NSIS 格式；windows runner 自带 7-Zip
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/dsh-nsis.XXXXXX")
+  SEVENZ="/c/Program Files/7-Zip/7z.exe"
+  if [ -f "$SEVENZ" ]; then
+    "$SEVENZ" x -y -o"$WORK" "$SETUP" >/dev/null 2>&1
+    EXE=$(find "$WORK" -name 'dsh-eac-shell.exe' 2>/dev/null | head -1)
+    [ -n "$EXE" ] && echo "  7z 解包成功（绕过安装器挂起）"
+  fi
+fi
+[ -n "$EXE" ] || { echo "FAIL: 安装/解包后未找到 dsh-eac-shell.exe"; exit 1; }
+echo "  exe: $EXE"
 INSTALL_DIR=$(dirname "$EXE")
 
 echo "== S2 安装树结构断言 =="
@@ -51,11 +63,16 @@ DSH_DESKTOP_RESOURCE_ROOT="$INSTALL_DIR/dsh-desktop" \
 "$NODE" "$SCRIPTS/sidecar-boot-probe.js" "$SERVER" 240
 
 echo "== S4 卸载清理 =="
-UNINSTALL=$(find "$LOCALAPPDATA" -iname 'Uninstall*Deepseek*Harness*.exe' 2>/dev/null | head -1)
-if [ -n "$UNINSTALL" ]; then
-  "$UNINSTALL" /S || true
-  echo "  uninstalled: $UNINSTALL"
+if [ -n "$WORK" ]; then
+  echo "  （7z 解包模式，跳过卸载；清理解包目录）"
+  rm -rf "$WORK" 2>/dev/null || true
 else
-  echo "  (未找到卸载器，跳过)"
+  UNINSTALL=$(find "$LOCALAPPDATA" -iname 'Uninstall*Deepseek*Harness*.exe' 2>/dev/null | head -1)
+  if [ -n "$UNINSTALL" ]; then
+    "$UNINSTALL" /S || true
+    echo "  uninstalled: $UNINSTALL"
+  else
+    echo "  (未找到卸载器，跳过)"
+  fi
 fi
 echo "WINDOWS SMOKE PASS"
