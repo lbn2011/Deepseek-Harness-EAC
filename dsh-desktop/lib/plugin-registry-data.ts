@@ -63,7 +63,8 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-session-manager', name: 'dsh-session-manager' },
   { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
   { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
-  { id: 'third-party-thinking', name: '@deepseek-ai/dsh-third-party-thinking' },
+  // third-party-thinking 插件已随上游退役（assets 目录移除），注册表条目
+  // 同步清理（否则「注册表一致性」检查报 dir 指向不存在资产）。
   { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
   { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },

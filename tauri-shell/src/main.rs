@@ -355,7 +355,7 @@ fn resolved_initial_bounds(
     (out_w, out_h, out_pos, out_max)
 }
 
-/// 解析 Node 运行时：优先内置 vendor/node（与 Electron 壳共用一份），回退 PATH。
+/// 解析 Node 运行时：优先内置 vendor/node（与桌壳共用一份），回退 PATH。
 fn resolve_node() -> String {
     if let Ok(p) = std::env::var("DSH_NODE_EXE") {
         if !p.is_empty() {
