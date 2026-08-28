@@ -17,7 +17,13 @@ echo "== S1 NSIS 静默安装 =="
 SETUP=$(find "$ART" -maxdepth 2 -name '*.exe' | head -1)
 [ -n "$SETUP" ] || { echo "FAIL: 未找到 NSIS 安装包（$ART）"; exit 1; }
 echo "  setup: $SETUP"
-"$SETUP" /S
+# 安装器可能在无头环境挂起（CI 实测 23min 未返回）：前台等待加超时。
+# /S 静默安装完成后安装器进程退出；超时则打印进程表诊断。
+timeout 240 "$SETUP" /S || {
+  echo "FAIL: NSIS 安装器超时/失败（exit $?）—— 进程表："
+  powershell -NoProfile -Command "Get-Process | Where-Object { \$_.ProcessName -match 'setup|Deepseek|dsh' } | Select-Object Id,ProcessName,StartTime | Format-Table" || true
+  exit 1
+}
 # 等待安装完成（轮询 LOCALAPPDATA 下的 dsh-eac-shell.exe）
 EXE=""
 for _ in $(seq 1 90); do

@@ -37,9 +37,11 @@ DEB=$(find . -maxdepth 2 -name '*.deb' | head -1)
 PKG=$(dpkg-deb -f "$DEB" Package)
 echo "  package: $PKG ($(dpkg-deb -f "$DEB" Version))"
 if ! dpkg -i "$DEB"; then echo "FAIL: dpkg -i 安装失败（依赖缺？）"; exit 1; fi
-if ! dpkg -L "$PKG" | grep -qE 'dsh-eac-shell|sidecar/server\.js'; then
+# 用 grep -E >/dev/null（不用 -q）：-q 匹配即退会让 dpkg 收 SIGPIPE，
+# pipefail 下管道返回 141 造成误判（deb 树其实是完整的）。
+if ! dpkg -L "$PKG" | grep -E 'dsh-eac-shell|sidecar/server\.js' >/dev/null; then
   echo "FAIL: deb 安装树缺关键路径 —— dpkg -L 输出："
-  dpkg -L "$PKG" | head -40
+  dpkg -L "$PKG" | head -40 || true
   exit 1
 fi
 echo "  installed: $PKG"
