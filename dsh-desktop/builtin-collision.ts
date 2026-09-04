@@ -18,6 +18,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+/** tmp+rename 原子写：写中途崩溃不留截断的 JSON/YAML（同 feature-pack saveRegistry）。 */
+function writeAtomic(file: string, text: string): void {
+  const tmp = file + '.tmp-' + process.pid;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, file);
+}
+
 /** 解析一行块内的 name（跟随 id 行的缩进行里找 name:）。 */
 function rowNameOf(lines: string[], startIdx: number): string | null {
   for (let j = startIdx + 1; j < lines.length; j++) {
@@ -175,7 +182,7 @@ export function removeMarketDuplicate(profileDir: string, builtinName: string, o
         dirty = true;
       }
       if (dirty) {
-        fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+        writeAtomic(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
         changed = true;
         log(`移除市场版依赖残留 ${builtinName}（package.json）`);
       }
@@ -185,7 +192,7 @@ export function removeMarketDuplicate(profileDir: string, builtinName: string, o
       const patch = fs.readFileSync(patchFile, 'utf8');
       const { patch: patched, removed } = stripPatchRows(patch, builtinName, builtinName.split('/').pop() as string);
       if (removed.length) {
-        fs.writeFileSync(patchFile, patched, 'utf8');
+        writeAtomic(patchFile, patched);
         removedRows = removed;
         changed = true;
         log(`移除市场版 patch 残留行: ${removed.join(', ')}`);

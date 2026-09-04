@@ -235,12 +235,28 @@ export function copyPluginPackage(profileDirP: string, src: string, name: string
   const destRoot = path.join(profileDirP, 'node_modules', ...name.split('/'));
   const stampFile = path.join(destRoot, COPY_STAMP);
   const want = pluginStampOf(src);
+  let rebuild = false;
   try {
-    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want && pluginCopyIsComplete(src, destRoot, want)) {
-      return; // 内容未变 + 目标完整：跳过全量重拷
+    if (want && fs.existsSync(stampFile)) {
+      const have = fs.readFileSync(stampFile, 'utf8');
+      if (have === want && pluginCopyIsComplete(src, destRoot, want)) {
+        return; // 内容未变 + 目标完整：跳过全量重拷
+      }
+      // 戳记变化 = 源包更新：旧版本已下线文件不得在目标侧残留。
+      rebuild = have !== want;
     }
   } catch {
     /* 比对失败按需重拷 */
+  }
+  // 戳记相同但目标不完整时仍走下方增量拷贝（保持修复路径的轻量语义）。
+  let rebuildOk = true;
+  if (rebuild) {
+    try {
+      fs.rmSync(destRoot, { recursive: true, force: true });
+    } catch {
+      // 目标被占清不掉时不落新戳记，下次启动重试整目录重建。
+      rebuildOk = false;
+    }
   }
   fs.mkdirSync(path.dirname(destRoot), { recursive: true });
   // 拷贝清单与戳记走树器共享（同一套 TOP_FILES/TOP_DIRS），双 walk 保证
@@ -250,7 +266,7 @@ export function copyPluginPackage(profileDirP: string, src: string, name: string
     fs.mkdirSync(path.dirname(df), { recursive: true });
     fs.copyFileSync(path.join(src, rel), df);
   });
-  if (want) {
+  if (want && rebuildOk) {
     try {
       fs.mkdirSync(destRoot, { recursive: true });
       fs.writeFileSync(stampFile, want);

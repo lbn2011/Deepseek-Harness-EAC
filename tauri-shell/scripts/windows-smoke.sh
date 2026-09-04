@@ -70,7 +70,11 @@ if [ -n "$WORK" ]; then
 else
   UNINSTALL=$(find "$LOCALAPPDATA" -iname 'Uninstall*Deepseek*Harness*.exe' 2>/dev/null | head -1)
   if [ -n "$UNINSTALL" ]; then
-    "$UNINSTALL" /S || true
+    # 与 S1 同构（BUG-A-018）：Git Bash 裸调 "$UNINSTALL" /S 会被 MSYS 参数转换
+    # 改写 /S（见 20-22 行注释）→ 卸载器进 GUI → 无头会话挂起。
+    # 改用 PowerShell Start-Process（参数原样 + -Wait），|| true 保留退出码兜底。
+    WIN_UNINSTALL=$(cygpath -w "$UNINSTALL" 2>/dev/null || echo "$UNINSTALL")
+    timeout 150 powershell -NoProfile -Command "Start-Process -FilePath '$WIN_UNINSTALL' -ArgumentList '/S' -Wait" || true
     echo "  uninstalled: $UNINSTALL"
   else
     echo "  (未找到卸载器，跳过)"

@@ -20,9 +20,12 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const httpGetJson = (url) => new Promise((resolve, reject) => {
-  http.get(url, { timeout: 4000 }, (r) => {
+  const req = http.get(url, { timeout: 4000 }, (r) => {
     let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
-  }).on('error', reject);
+  });
+  // BUG-A-021：timeout 选项仅 socket 级 —— 监听 'timeout' 并中止，防止对端挂起时 Promise 永不 settle
+  req.on('timeout', () => req.destroy(new Error('timeout 4000ms')));
+  req.on('error', reject);
 });
 
 let failures = 0;

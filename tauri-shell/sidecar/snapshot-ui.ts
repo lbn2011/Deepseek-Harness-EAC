@@ -601,8 +601,12 @@ function renderTree(d: NonNullable<SnapOverview['data']>): void {
           );
         } else if (op === 'files') {
           expandedId = expandedId === id ? null : id;
-          void refresh();
-          if (expandedId === id) void loadFiles(id);
+          // 先等 refresh() 重渲染出新的占位盒再 loadFiles：并发时 detail 应答
+          // 会写进已被 innerHTML 替换掉的旧 DOM，新盒永远停在「加载中…」。
+          void (async () => {
+            await refresh();
+            if (expandedId === id) await loadFiles(id);
+          })();
         }
       });
     });

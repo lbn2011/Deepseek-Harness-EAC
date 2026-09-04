@@ -221,11 +221,17 @@ export function buildSdk(params: HostInitParams, io: SdkIo): { ctx: Record<strin
     : [dataDir]);
   if (permissions.shell === true) {
     ctx.shell = {
-      exec: (cmd: string, timeoutMs = 30_000): Promise<{ code: number | null; stdout: string; stderr: string }> =>
+      exec: (cmd: string, timeoutMs = 30_000): Promise<{ code: number | null; signal?: NodeJS.Signals | null; stdout: string; stderr: string }> =>
         new Promise((resolve) => {
           exec(String(cmd), { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
-            const code = typeof err?.code === 'number' ? err.code : 0;
-            resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+            if (!err) {
+              resolve({ code: 0, stdout: String(stdout), stderr: String(stderr) });
+              return;
+            }
+            // 有 err 但 code 非 number（超时强杀/信号终止/spawn 失败）不得回落
+            // 为 0（失败误判成功）；映射为 -1 并透传 signal 供插件区分原因。
+            const code = typeof err.code === 'number' ? err.code : -1;
+            resolve({ code, signal: err.signal ?? null, stdout: String(stdout), stderr: String(stderr) });
           });
         }),
     };

@@ -192,6 +192,9 @@ function fetchJson(url: string, apiKey: string, timeoutMs = 15_000): Promise<unk
       (res) => {
         let body = '';
         res.setEncoding('utf8');
+        // 响应流中途出错（headers 已收）不再有 req 'error'，缺监听器会成为
+        // 未捕获异常。
+        res.on('error', reject);
         res.on('data', (c: string) => {
           body += c;
           if (body.length > 1024 * 1024) req.destroy(new Error('响应过大'));

@@ -87,7 +87,10 @@ export function isAllowedWebUrl(url: string): boolean {
       const base = new URL(state.webUrl);
       return target.origin === base.origin;
     }
-    return target.hostname === '127.0.0.1' || target.hostname === 'localhost' || target.hostname === '::1';
+    // WHATWG URL 把 IPv6 字面量序列化为带方括号的 hostname（'[::1]'），
+    // 两种形态都要放行。
+    return target.hostname === '127.0.0.1' || target.hostname === 'localhost'
+      || target.hostname === '::1' || target.hostname === '[::1]';
   } catch {
     return false;
   }

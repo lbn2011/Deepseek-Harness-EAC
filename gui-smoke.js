@@ -15,9 +15,12 @@ const EXE = process.env.DSH_SMOKE_EXE || path.join(repo, 'tauri-shell', 'target'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const httpGetJson = (url) => new Promise((resolve, reject) => {
-  http.get(url, { timeout: 4000 }, (r) => {
+  const req = http.get(url, { timeout: 4000 }, (r) => {
     let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
-  }).on('error', reject);
+  });
+  // BUG-A-004：timeout 选项仅 socket 级 —— 监听 'timeout' 并中止，防止对端挂起时 Promise 永不 settle
+  req.on('timeout', () => req.destroy(new Error('timeout 4000ms')));
+  req.on('error', reject);
 });
 
 let failures = 0;
@@ -69,15 +72,29 @@ async function waitForTarget(matchFn, timeoutMs) {
   throw new Error('target not found in time');
 }
 
-async function listOrphans() {
-  return new Promise((resolve) => {
-    const p = spawn('powershell', ['-NoProfile', '-Command',
-      `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'tmp-p2boot' } | Select-Object -ExpandProperty ProcessId`],
-      { windowsHide: true });
-    let out = ''; p.stdout.on('data', (d) => (out += d));
-    p.on('exit', () => resolve(out.trim()));
-  });
+// BUG-A-003：DSH_HOME 走 env 不进命令行，CommandLine 匹配恒空 —— 改为脚本自跟踪
+// spawn 树 PID（退出前快照 shell → sidecar → dsh web），退出后按 PID 校验已回收。
+const childPids = (pid) => new Promise((resolve) => {
+  const p = spawn('powershell', ['-NoProfile', '-Command',
+    `Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" | Select-Object -ExpandProperty ProcessId`],
+    { windowsHide: true });
+  let out = ''; p.stdout.on('data', (d) => (out += d));
+  p.on('error', () => resolve([]));
+  p.on('exit', () => resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map(Number)));
+});
+async function snapshotTree(rootPid) {
+  const all = [rootPid];
+  for (const k of await childPids(rootPid)) all.push(...await snapshotTree(k));
+  return all;
 }
+const alivePids = (pids) => pids.length === 0 ? Promise.resolve('') : new Promise((resolve) => {
+  const p = spawn('powershell', ['-NoProfile', '-Command',
+    `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`],
+    { windowsHide: true });
+  let out = ''; p.stdout.on('data', (d) => (out += d));
+  p.on('error', () => resolve(''));
+  p.on('exit', () => resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).join(' ')));
+});
 
 (async () => {
   console.log('[gui-smoke] launching shell with DSH_HOME=' + tmpHome);
@@ -211,6 +228,8 @@ async function listOrphans() {
     }
 
     // 7b) 退出应用（overlay quit 按钮 → win.close-force → app.exit → 优雅退出链）
+    //     退出前快照 spawn 树 PID（BUG-A-003 自跟踪，供步骤 8 校验零孤儿）
+    const treePids = await snapshotTree(shell.pid);
     const exited = await new Promise((res) => {
       const t0 = Date.now();
       const tick = () => (shell.exitCode !== null ? res(true) : Date.now() - t0 > 20000 ? res(false) : setTimeout(tick, 500));
@@ -218,9 +237,9 @@ async function listOrphans() {
     });
     check('退出应用（进程收口）', exited, 'exitCode=' + shell.exitCode);
 
-    // 8) 零孤儿：DSH_HOME 指向 tmp 的 node/dsh 进程应已回收
+    // 8) 零孤儿：退出前快照的 spawn 树 PID（shell/sidecar/dsh web）应已全部回收
     await sleep(3500);
-    const orphans = await listOrphans();
+    const orphans = await alivePids(treePids);
     check('零孤儿进程（sidecar/dsh web 均回收）', orphans === '', orphans || '(none)');
 
     c.close();

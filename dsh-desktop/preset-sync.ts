@@ -17,6 +17,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+/** tmp+rename 原子写 settings.yaml：写中途崩溃不留截断文件（同 feature-pack saveRegistry）。 */
+function writeAtomic(file: string, text: string): void {
+  const tmp = file + '.tmp-' + process.pid;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, file);
+}
+
 /** syncBundledPresets 的结果。 */
 export interface PresetSyncResult {
   installed: string[];
@@ -124,13 +131,13 @@ export function ensureDefaultAgentPreset(
         if (/^[ \t]+default[ \t]*:/.test(lines[k] as string)) return 'kept';
       }
       lines.splice(i + 1, 0, '  default: ' + presetId);
-      fs.writeFileSync(file, (bom ? '﻿' : '') + lines.join(eol));
+      writeAtomic(file, (bom ? '﻿' : '') + lines.join(eol));
       return 'set';
     }
     // 缩进出现的 agent-presets 键（嵌套在别的 section 里）不归我们管，
     // 直接追加顶层 section 不会与之冲突。
     const trailing = text === '' || text.endsWith(eol) ? '' : eol;
-    fs.writeFileSync(file, (bom ? '﻿' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
+    writeAtomic(file, (bom ? '﻿' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
     return 'set';
   } catch (err) {
     log('设置默认 agent preset 失败: ' + String((err as Error).message));

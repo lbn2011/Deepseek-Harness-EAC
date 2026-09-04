@@ -4,6 +4,7 @@
 // 用法：在 server.ts 尾部（readline 循环之前）require 本文件并传入上下文。
 
 import * as path from 'node:path';
+import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as cp from 'node:child_process';
 
@@ -244,21 +245,21 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
 let rescueBusy = false;
 
 /** 平台化诊断 zip 命令（纯函数，便于跨平台测试）。
- * 说明：darwin 的 ditto 归档 logs 目录本体，与 Windows `logs\*` 的内容级
- * 打包存在目录层级差异——对诊断用途无影响；ditto 为 macOS 内置零依赖。 */
+ * 说明：非 win32 用系统 zip 递归归档 logs 目录本体，与 Windows `logs\*` 的
+ * 内容级打包存在目录层级差异——对诊断用途无影响。 */
 export function buildZipCommand(
   platform: NodeJS.Platform,
   logsDir: string,
   zip: string,
 ): { program: string; args: string[] } {
-  if (platform === 'darwin') {
-    return { program: 'ditto', args: ['-c', '-k', logsDir, zip] };
+  if (platform === 'win32') {
+    return {
+      program: 'powershell',
+      args: ['-NoProfile', '-Command',
+        `Compress-Archive -Path "${logsDir}\\*" -DestinationPath "${zip}" -Force`],
+    };
   }
-  return {
-    program: 'powershell',
-    args: ['-NoProfile', '-Command',
-      `Compress-Archive -Path "${logsDir}\\*" -DestinationPath "${zip}" -Force`],
-  };
+  return { program: 'zip', args: ['-qr', zip, logsDir] };
 }
 
 // 恢复页面（assets/recovery.html 语义）：日志打包到桌面并打开目录。
@@ -288,7 +289,14 @@ async function exportLogs(): Promise<Record<string, unknown>> {
 }
 
 function os_home_desktop(): string {
-  const home = process.env.USERPROFILE || path.join('C:', 'Users', 'Public');
+  // 非 Windows 用 os.homedir()；Windows 优先 USERPROFILE（重定向场景），
+  // 缺失时回退 os.homedir()（不再落到 C:\Users\Public）。
+  let home: string;
+  if (process.platform === 'win32') {
+    home = process.env.USERPROFILE || os.homedir();
+  } else {
+    home = os.homedir();
+  }
   return path.join(home, 'Desktop');
 }
 

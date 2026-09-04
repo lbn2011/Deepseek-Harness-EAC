@@ -70,21 +70,22 @@ function listLnkFiles(dir: string): string[] {
   }
 }
 
-/** 安全读 .lnk（损坏/宿主无 .lnk 能力返回 null）。 */
-function readLnkSafe(p: string): LnkLike | null {
+/** 安全读 .lnk（损坏/宿主无 .lnk 能力返回 null）。宿主实现为异步（sidecar 走
+ *  PowerShell 子进程），读链路整体 await 化。 */
+async function readLnkSafe(p: string): Promise<LnkLike | null> {
   try {
-    // Task 5.2：.lnk 读写经宿主上下文注入（legacy-shell shell / sidecar PowerShell
-    // WScript.Shell 实现，见 sidecar/server.ts）；无能力宿主返回 null。
-    return (hostCtx().shortcuts?.readLink(p) ?? null) as LnkLike | null;
+    // Task 5.2：.lnk 读写经宿主上下文注入（sidecar PowerShell WScript.Shell
+    // 实现，见 sidecar/server.ts）；无能力宿主返回 null。
+    return ((await hostCtx().shortcuts?.readLink(p)) ?? null) as LnkLike | null;
   } catch {
     return null;
   }
 }
 
 /** .lnk 是否使用我们自管的图标（无自定义图标也视为可接管）。 */
-function lnkUsesManagedIcon(lnkPath: string, ico: string): boolean {
+async function lnkUsesManagedIcon(lnkPath: string, ico: string): Promise<boolean> {
   if (!ico) return false;
-  const link = readLnkSafe(lnkPath);
+  const link = await readLnkSafe(lnkPath);
   if (!link) return false;
   // 无自定义图标（icon 为空，用 target 自带）视为可接管。
   if (!link.icon) return true;
@@ -92,13 +93,13 @@ function lnkUsesManagedIcon(lnkPath: string, ico: string): boolean {
 }
 
 /** 扫描各桌面目录，收集 .lnk 条目（scope + 元数据）供去重判定。 */
-function collectDesktopShortcutEntries(
+async function collectDesktopShortcutEntries(
   dirs: Array<{ scope: 'user' | 'public'; dir: string }>,
-): ShortcutEntry[] {
+): Promise<ShortcutEntry[]> {
   const rows: ShortcutEntry[] = [];
   for (const { scope, dir } of dirs) {
     for (const filePath of listLnkFiles(dir)) {
-      rows.push({ scope, dir, filePath, link: readLnkSafe(filePath) });
+      rows.push({ scope, dir, filePath, link: await readLnkSafe(filePath) });
     }
   }
   return rows;
@@ -110,7 +111,7 @@ function collectDesktopShortcutEntries(
  * 位置，并对桌面做双创建者去重。E2E 环境用 DSH_DESKTOP_TEST_NO_SHORTCUTS=1
  * 跳过。
  */
-export function maintainShortcuts(): void {
+export async function maintainShortcuts(): Promise<void> {
   const host = hostCtx();
   if (!host.isPackaged() || !shortcutMaintenanceSupported(process.platform)) return;
   // Task 5.2：.lnk 能力由宿主注入（legacy-shell shell / sidecar PowerShell）；
@@ -152,7 +153,7 @@ export function maintainShortcuts(): void {
         /* 单文件删除失败继续 */
       }
     }
-    let desktopEntries = collectDesktopShortcutEntries(desktopDirs);
+    let desktopEntries = await collectDesktopShortcutEntries(desktopDirs);
     // exe 被移动过或图标设计更新：开始菜单照常维护；桌面仅刷新便携版
     // 运行时原样生成的快捷方式。安装版桌面快捷方式统一交给 NSIS，用户
     // 改名/换图标/加参数后的快捷方式也不再覆盖。
@@ -162,8 +163,8 @@ export function maintainShortcuts(): void {
     if (targetMoved || iconOutdated) {
       const prevTarget = typeof settings.shortcutTarget === 'string' ? settings.shortcutTarget : null;
       const startMenuOwn = fs.existsSync(startMenu)
-        && shortcutTargetsApp(readLnkSafe(startMenu), target, targetMoved ? prevTarget : null);
-      if (startMenuOwn && (targetMoved || lnkUsesManagedIcon(startMenu, ico))) {
+        && shortcutTargetsApp(await readLnkSafe(startMenu), target, targetMoved ? prevTarget : null);
+      if (startMenuOwn && (targetMoved || (await lnkUsesManagedIcon(startMenu, ico)))) {
         try {
           lnk.writeLink(startMenu, 'replace', opts);
           changed = true;
@@ -188,12 +189,12 @@ export function maintainShortcuts(): void {
             /* 单链接写失败继续 */
           }
         }
-        if (desktopRefreshed) desktopEntries = collectDesktopShortcutEntries(desktopDirs);
+        if (desktopRefreshed) desktopEntries = await collectDesktopShortcutEntries(desktopDirs);
       }
     }
     // 开始菜单快捷方式：系统通知（Toast）的前置条件，按 target 匹配维护。
     const startMenuOk = fs.existsSync(startMenu)
-      && shortcutTargetsApp(readLnkSafe(startMenu), target);
+      && shortcutTargetsApp(await readLnkSafe(startMenu), target);
     if (!startMenuOk) {
       try {
         lnk.writeLink(startMenu, 'create', opts);

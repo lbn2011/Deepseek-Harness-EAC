@@ -62,6 +62,12 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
       setTimeout(function () {
         if (pending[id]) {
           delete pending[id];
+          // 超时作废时同步清掉排队帧：重连 flush 只重放仍存活的调用，
+          // 不得重放调用方已放弃的副作用调用（boot.restart 等）。
+          for (var i = 0; i < queue.length; i++) {
+            var qf = queue[i];
+            if (qf && qf.id === id) { queue.splice(i, 1); break; }
+          }
           reject(new Error('bridge call timeout: ' + method));
         }
       }, timeoutMs || 30000);

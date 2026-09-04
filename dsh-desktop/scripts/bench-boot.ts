@@ -215,10 +215,14 @@ async function spawnAndInit(
   });
   child.stdout.on('data', (c: Buffer) => peer.feed(c));
   child.stderr?.on('data', () => { /* 插件日志忽略 */ });
-  await ready;
   try {
-    child.kill();
-  } catch { /* 已退出 */ }
+    await ready;
+  } finally {
+    // 无论握手成败都回收子进程，避免 init 超时/失败路径泄漏 node 进程
+    try {
+      child.kill();
+    } catch { /* 已退出 */ }
+  }
   return Date.now() - t0;
 }
 

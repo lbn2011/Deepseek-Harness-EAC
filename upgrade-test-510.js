@@ -19,7 +19,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (name, ok, detail) => { console.log(`${ok ? '✔' : '✖'} ${name}${detail ? ' — ' + detail : ''}`); if (!ok) failures++; };
 
-const ps = (script) => { try { return execSync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }).trim(); } catch (e) { return (e.stdout || '').trim(); } };
+// BUG-A-009：查询失败必须返回 null 与「成功返回 0」区分（原 catch 返回 e.stdout，
+// 空串经 Number('') === 0 令进程残留断言假阳性）
+const ps = (script) => {
+  try {
+    return execSync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  } catch (e) {
+    const out = e.stdout == null ? '' : String(e.stdout).trim();
+    return out !== '' ? out : null;
+  }
+};
 const keyProp = (prop) => ps(`(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Deepseek Harness EAC' -ErrorAction SilentlyContinue).${prop}`);
 const unquote = (s) => String(s || '').trim().replace(/^"|"$/g, '');
 
@@ -79,7 +88,7 @@ async function main() {
   const sc = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Deepseek Harness EAC.lnk');
   check('开始菜单快捷方式存在', fs.existsSync(sc));
   const procLeft = ps(`(Get-Process 'Deepseek Harness EAC','dsh-eac-shell' -ErrorAction SilentlyContinue | Measure-Object).Count`);
-  check('旧/新进程无残留运行冲突', Number(procLeft) === 0, 'procs=' + procLeft);
+  check('旧/新进程无残留运行冲突', procLeft !== null && Number(procLeft) === 0, procLeft === null ? '进程查询失败' : 'procs=' + procLeft);
 
   console.log(failures === 0 ? '[upgrade-test-510] ALL PASS' : `[upgrade-test-510] ${failures} FAILURES`);
   process.exit(failures ? 1 : 0);

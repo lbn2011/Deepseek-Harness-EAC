@@ -13,7 +13,7 @@ import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { state } from './state.js';
 import { log } from './log.js';
-import { nodeExe, dshBin } from './proc.js';
+import { nodeExe, dshBin, killTree } from './proc.js';
 import { desktopProfile, profileDirFor, artifactCacheDirFor } from './paths.js';
 import { childEnv } from './server.js';
 import { bridge } from './bridge.js';
@@ -188,11 +188,9 @@ export async function processPendingMarketOps(): Promise<void> {
       child.stderr?.on('data', onData);
       const timer = setTimeout(() => {
         log('market-pending', '排队任务超时（5 分钟），强制终止');
-        try {
-          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        } catch {
-          /* kill 失败由 close 事件兜底 */
-        }
+        // 跨平台回收走 killTree（taskkill / POSIX 信号双分支）；close 事件
+        // 照常在进程退出后触发，Promise 由既有 close 处理收口。
+        killTree(child);
       }, 5 * 60 * 1000);
       child.on('error', (err) => {
         clearTimeout(timer);

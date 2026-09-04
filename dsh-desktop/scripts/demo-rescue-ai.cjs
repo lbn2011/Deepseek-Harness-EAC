@@ -15,9 +15,11 @@
 // 环境：AI 调用走 settings 里配置的本地路由网关（llm-pi-ai.providers.router
 // 的 baseURL + ROUTER_API_KEY），不经官方 api.deepseek.com。
 //
-// 用法：node scripts/demo-rescue-ai.cjs [--keep] [--exe=dist/...x64.exe]
+// 用法：node scripts/demo-rescue-ai.cjs [--keep] [--exe=dist/...x64.exe] [--clean=<root>]
 //   --keep        结束时不清理演示目录（默认清理）
 //   --model=xxx   路由模型 id（默认 oc/deepseek-v4-flash-free(max)）
+//   --clean=<root> 清理指定演示目录：只结束命令行含该目录的演示进程（精确
+//                 匹配，不按映像名全局杀），再删除该目录
 
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -60,16 +62,53 @@ function readApiKeyFrom(file) {
     return m ? m[1] : '';
   } catch { return ''; }
 }
-function killApp() {
-  spawnSync('taskkill', ['/IM', 'Deepseek Harness EAC.exe', '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+function killProcessesUnderRoot(root) {
+  // 精确回收：只杀命令行中包含指定演示 root 的进程（不按映像名全局杀，
+  // 不会波及用户正在使用的真实应用实例）；排除自身（--clean 参数里含 root）。
+  const esc = root.replace(/'/g, "''");
+  const script = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*" +
+    esc + "*' } | ForEach-Object { $_.ProcessId }";
+  let pids = [];
+  try {
+    const out = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', windowsHide: true });
+    pids = String(out.stdout || '').split(/\r?\n/)
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0 && n !== process.pid);
+  } catch { /* 查询失败按无残留处理 */ }
+  for (const pid of pids) {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  }
+  return pids.length;
 }
 function procAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 async function main() {
-  killApp();
-  await sleep(1500);
+  // --clean=<root>：清理模式 —— 精确结束命令行含该演示目录的进程后删除目录。
+  if (ARGS.clean) {
+    const root = path.resolve(String(ARGS.clean));
+    if (path.basename(root).indexOf('dsh-rescue-demo-') !== 0) {
+      console.error(`[demo] 拒绝清理：${root} 不是本脚本创建的演示目录（应为 dsh-rescue-demo-*）`);
+      process.exit(2);
+    }
+    const killed = killProcessesUnderRoot(root);
+    if (killed) { console.log(`[demo] 已结束 ${killed} 个演示进程，等待退出…`); await sleep(1500); }
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+      console.log(`[demo] 已清理演示目录: ${root}`);
+    } catch (err) {
+      console.error(`[demo] 清理失败（目录不存在或文件仍被占用）: ${root} — ${(err && err.message) || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+  // 安全性：启动时不再按映像名全局 taskkill「Deepseek Harness EAC.exe」——
+  // 那会误杀用户正在使用的真实应用实例。演示用全新 mkdtemp 目录 + 独立 exe
+  // 副本，不依赖全局清理；如上次演示实例仍在运行，请手动关闭或用
+  // --clean=<上次演示目录> 精确回收。
+  console.log('[demo] 提示：如上次演示的应用实例仍在运行，请先手动关闭（本脚本不再全局杀同名进程）。');
   const root = fs.mkdtempSync(path.join(ROOT_BASE, 'dsh-rescue-demo-'));
   const home = path.join(root, 'dsh-home');
   const runDir = path.join(root, 'run');

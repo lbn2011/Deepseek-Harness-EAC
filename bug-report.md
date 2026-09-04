@@ -1,9 +1,15 @@
 # Deepseek-Harness-EAC 全项目 Bug 排查报告
 
 - 文件编号: TCC-QE-BUG-20260829
-- 版本: V1.2（V1.1.1 排查增量 + 2026-08-30 批量修复：**22 条已修复 ✅ / 1 条部分修复 🔶**，修复条目见各标题后缀与「修复汇总」；分叉关系：本地领先 123 / 落后上游 32，G=本地回归、H=未合并上游修复）
+- 版本: V1.3（V1.2 → 2026-09-05 第二轮批量修复 **57 条 ✅**，累计 **79 条已修复 ✅ / 1 条部分修复 🔶**；修复条目见各标题后缀与「修复汇总」；分叉关系：本地领先 123 / 落后上游 32，G=本地回归、H=未合并上游修复）
 
-## 修复汇总（2026-08-30）
+## 修复汇总（2026-09-05，第二轮，57 条）
+
+✅ S 级（3）：D-001 进程锁 TOCTOU 竞态（wx 排他创建）、E-001 更新合并写流 error 监听过晚、D-006 预览服务无 Host 校验/任意路径读（Host 白名单 + isUnderFileRoots 围栏）。  
+✅ M 级（13）：B-001 /died URL 编码、B-009 壳/sidecar files.open 契约错位、B-012 快照详情竞态、B-013 export-logs 跨平台、C-011 scoped 主包第二副本、C-014 更新日志流无 error 监听、D-004 removePlugin 缺 await、D-005 installPack 失败不回滚、D-007 更新防重入滞后置位、D-008 watchdog execSync 冻结事件循环、D-010 taskkill 无 POSIX 分支、E-002 SDK shell.exec 失败误判成功、G-102 客户端更新 installDir 错目录。  
+✅ C 级（41）：A 区 14（boot/gui/rescue/shim/upgrade 探活超时与孤儿检查恒真、make-portable 参数与流式哈希、S4 卸载 MSYS 坑）、B 区 3（B-006 pending 泄漏、B-015 桥队列重放、B-021 encode_back 编码不全）、C 区 5（C-001 孤儿文件、C-002/C-004 原子写、C-007/C-009 res error 监听）、D 区 4（D-011 run-state 原子写、D-012 插件拷贝残留、D-013 [::1]、D-014 图片粘贴解码前不限长）、F 区 15（e2e 系临时目录/进程泄漏、demo-rescue 误杀真实实例、验证脚本死断言、测试死断言）。  
+
+## 修复汇总（2026-08-30，第一轮，22 条）
 
 ✅ S 级（5）：B-010 手机桥静态 cookie 认证绕过、E-003 诊断打包回调 throw 崩主进程、F-011 快照 id 目录穿越、G-001 WebView2Loader.dll 不进安装包、H-002 凭据版式自愈缺失（移植上游最终形态）。  
 ✅ M 级（13）：B-002 sidecar 兜底 kill 死代码、B-004 overlay 选择器越界、B-008 IPC 冒号通道全失效（含会话 token 注入配套）、G-002 文件拖入保存失效、G-003 窗口状态单位混用、G-101 导出日志断点、G-103 通知开关状态双源、G-104 预览流错误未捕获、G-105 托盘菜单被焦点顶掉、G-106 /died 重建窗无桥注入、C-008 风险分级 fail-open、B-011 配对 TTL 边界失效。  
@@ -14,7 +20,9 @@
 
 
 
-验证：tsc 全量类型检查+编译通过；sidecar stdio 冒烟实证 chrome:init / dsh:plugin-list / snapshot:overview 三通道返回真实数据（B-008 修复前一律 method not found）；cargo check（tauri-shell）与 cargo test（native/snapshot）见提交说明。
+验证（2026-09-05 第二轮）：tsc 全量类型检查+编译通过；16 个受影响测试文件全绿（server-lock 8、host-ctx 11、rescue-zip-command 3、watchdog-behavior 3、stable-port 9、logger-redact 60、diagnostics-zip 2、supervisor-phase1 6、balance-prices-core 8、builtin-collision 10、feature-pack 14、plugin-updater 26、preset-sync 13、shortcut-maintenance 12、snapshot-manager 7、sidecar-snapshot-rpc 4，共 191 通过 / 0 失败）；Rust 改动（B-001/B-006/B-009/B-021）因本机 VS BuildTools link.exe 损坏仅经 rustfmt + 读码核对，待工具链修复后补 cargo check。
+
+验证（2026-08-30 第一轮）：tsc 全量类型检查+编译通过；sidecar stdio 冒烟实证 chrome:init / dsh:plugin-list / snapshot:overview 三通道返回真实数据（B-008 修复前一律 method not found）；cargo check（tauri-shell）与 cargo test（native/snapshot）见提交说明。
 
 - 编制: 资深质量工程师 / 代码审计
 - 日期: 2026-08-29
@@ -41,13 +49,13 @@
 | 编号        | 位置                                            | 问题                                                                        | 状态        |
 | --------- | --------------------------------------------- | ------------------------------------------------------------------------- | --------- |
 | BUG-B-010 | tauri-shell/sidecar/phone-bridge.ts:274       | `dsh_mobile=1` 静态 cookie，LAN 内任何人可绕过配对调用 session.prompt;disconnect 不失效    | ✅ 已修复     |
-| BUG-D-001 | dsh-desktop/lib/server-lock.ts:36-59          | 锁文件 check-then-act 竞态：`writeFileSync` 无 `wx` 排他标志，两实例可并发写 DSH_HOME        | 确认        |
-| BUG-E-001 | dsh-desktop/lib/client-update/download.ts:269 | concatFiles 写流 error 监听挂接过晚，合并分片出错 → 未捕获异常打挂主进程且留截断文件                     | 确认        |
+| BUG-D-001 | dsh-desktop/lib/server-lock.ts:36-59          | 锁文件 check-then-act 竞态：`writeFileSync` 无 `wx` 排他标志，两实例可并发写 DSH_HOME        | ✅ 已修复     |
+| BUG-E-001 | dsh-desktop/lib/client-update/download.ts:269 | concatFiles 写流 error 监听挂接过晚，合并分片出错 → 未捕获异常打挂主进程且留截断文件                     | ✅ 已修复     |
 | BUG-E-003 | dsh-desktop/lib/logger/diagnostics.ts:61      | `archive.on('error', e => { throw e })` 事件回调里 throw → 诊断打包出错即崩溃主进程        | ✅ 已修复     |
 | BUG-F-011 | dsh-desktop/native/snapshot/store.rs:97       | snapshot_id 无校验拼路径，`../` 穿越可删除/读取存储目录外任意 .json                            | ✅ 已修复     |
 | BUG-G-001 | tauri-shell/tauri.windows.conf.json（已删除）      | Windows 专属 conf 被删 → WebView2Loader.dll 不进安装包，安装版启动即 0xC0000135（A-017 坐实） | ✅ 已修复     |
 | BUG-A-017 | （并入 BUG-G-001）                                | 原疑点已由 G-001 坐实：上游靠 tauri.windows.conf.json 兜底，本地把兜底删了                     | ✅ 已修复     |
-| BUG-D-006 | dsh-desktop/lib/preview.ts:56                 | 预览服务无 Host 校验/token、任意绝对路径可读，DNS rebinding 泄密面                            | 待复查       |
+| BUG-D-006 | dsh-desktop/lib/preview.ts:56                 | 预览服务无 Host 校验/token、任意绝对路径可读，DNS rebinding 泄密面                            | ✅ 已修复     |
 | BUG-H-002 | 上游提交 25a8ccc+5d89422（未合并）                     | 凭据库反向迁移=升级后启动卡死元凶 / 写读不对称=启动必死；本地是否等效自愈待对照                                | ✅ 已修复（移植） |
 |           |                                               |                                                                           |           |
 
@@ -85,7 +93,7 @@
 
 # A区:根目录脚本与tauri构建脚本 排查片段
 
-### BUG-A-001
+### BUG-A-001（✅ 已修复 2026-09-05：boot-smoke 子进程 stdin 挂 error 监听 + exit fail-fast，干净 FAIL 收场）
 
 - 文件: boot-smoke.js:41,54
 - 问题: 向已退出的 sidecar 写 stdin 时触发 EPIPE，因 child.stdin 无 'error' 监听，产生 uncaughtException，冒烟脚本以崩溃栈而非干净 FAIL 信息收场
@@ -93,7 +101,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-002
+### BUG-A-002（✅ 已修复 2026-09-05：boot-smoke 探活 req 挂 timeout 事件并 destroy，对端挂起不再干等 300s）
 
 - 文件: boot-smoke.js:37
 - 问题: http.get 设了 timeout:5000 但只监听 'error'；Node 的 timeout 选项仅是 socket.setTimeout，超时触发的是 request 'timeout' 事件且不会自动中止请求——若对端接受连接后挂起，探活回调永不触发，只能干等 300s 总超时
@@ -101,7 +109,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-003
+### BUG-A-003（✅ 已修复 2026-09-05：「零孤儿进程」检查改为自跟踪 spawn 的 PID 树（Get-CimInstance 递归），删除恒空 CommandLine 匹配）
 
 - 文件: gui-smoke.js:75
 - 问题: "零孤儿进程"硬门槛形同虚设、恒真通过：PowerShell 用 CommandLine -match 'tmp-p2boot' 过滤 node.exe，但 DSH_HOME 是经 env 传入（第 87 行），tmp-p2boot 不出现在任何命令行参数里，过滤结果恒为空字符串
@@ -109,7 +117,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-A-004
+### BUG-A-004（✅ 已修复 2026-09-05：gui-smoke httpGetJson 挂 timeout+destroy，Promise 必 settle）
 
 - 文件: gui-smoke.js:17-21
 - 问题: httpGetJson 同 BUG-A-002：timeout:4000 只设置 socket 超时且未监听 'timeout'/'abort'；CDP 端点若 accept 后不响应，Promise 永不 settle，waitForTarget 的 while 循环被 await 卡死，180s 上限失效
@@ -117,7 +125,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-005
+### BUG-A-005（✅ 已修复 2026-09-05：「桥注入就绪」轮询结果真实带出断言，替换恒真 true）
 
 - 文件: rescue-smoke.js:125-130
 - 问题: 「桥注入就绪」检查恒真：while 循环轮询 60s 等 window.dshDesktop.\_call，但循环自然耗尽后不置任何标志，第 130 行 check('桥注入就绪', true) 无条件报通过——桥未注入时该断言照样 PASS，且后续 waitAlive 会因 call 全失败而误报"服务不存活"
@@ -125,7 +133,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-A-006
+### BUG-A-006（✅ 已修复 2026-09-05：孤儿清理改为对自 spawn 根 PID taskkill /T /F，替换恒空命令行匹配）
 
 - 文件: rescue-smoke.js:189
 - 问题: finally 阶段清理孤儿进程用 CommandLine -match 'rescue-home' 过滤 node.exe，与 BUG-A-003 同根因：DSH_HOME 走 env 不进命令行，匹配恒为空，清理逻辑恒为空转，崩溃路径下 node 孤儿进程残留
@@ -141,7 +149,7 @@
 - 严重度: M
 - 状态: 待复查（需确认前端产物是否随仓库锁定）
 
-### BUG-A-008
+### BUG-A-008（✅ 已修复 2026-09-05：ps() 失败返回 null，断言 null 即 FAIL 报「进程查询失败」，消除 Number('')===0 假阳性）
 
 - 文件: upgrade-test-441.js:84
 - 问题: 「旧/新进程无残留运行冲突」检查存在假阳性：ps() 在 PowerShell 整体失败时 catch 返回 e.stdout（通常为 ''），而 Number('') === 0 恰好等于期望值——进程查询工具链坏掉时该断言照样 PASS
@@ -149,7 +157,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-009
+### BUG-A-009（✅ 已修复 2026-09-05：同 A-008：ps() null 分流消除假阳性）
 
 - 文件: upgrade-test-510.js:82
 - 问题: 与 BUG-A-008 完全同型：ps() 失败返回 '' 时 Number('') === 0，「无进程残留」断言假阳性
@@ -157,7 +165,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-010
+### BUG-A-010（✅ 已修复 2026-09-05：listOrphans 改 PID 树跟踪；CDP_PORT 9334→9336 消除与 ui-verify-smoke 的端口冲突）
 
 - 文件: verify-shim-fix.cjs:72-80,14
 - 问题: 两处：① listOrphans 与 BUG-A-003 同根因（CommandLine -match 'tmp-p2boot'，DSH_HOME 走 env 不进命令行），「零孤儿进程」恒真通过；② CDP_PORT=9334 与 ui-verify-smoke.js:16 完全相同，两者若在同一 CI 流水线并行/紧邻执行会因 WebView2 调试端口冲突相互踩塌
@@ -189,7 +197,7 @@
 - 严重度: M
 - 状态: 待复查（取决于 tauri.macos.conf.json 的 target 配置）
 
-### BUG-A-014
+### BUG-A-014（✅ 已修复 2026-09-05：make-portable --out 缺参入口校验，打印用法 exit(2)）
 
 - 文件: tauri-shell/make-portable.mjs:26
 - 问题: --out 缺参数时 process.argv[outArg+1] 为 undefined，path.resolve(undefined) 抛 TypeError，报错信息无指引
@@ -197,7 +205,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-015
+### BUG-A-015（✅ 已修复 2026-09-05：SHA256 改 createReadStream 流式哈希，500MB 产物不再全量读入内存）
 
 - 文件: tauri-shell/make-portable.mjs:74-76
 - 问题: 计算 SHA256 用 readFileSync 一次性把约 500MB 的 zip 全量读入内存再 hash.update；大产物下内存峰值翻倍，低内存 CI runner 上有 OOM 风险
@@ -221,7 +229,7 @@
 - 严重度: S
 - 状态: 待复查（若 tauri-bundler 对 NSIS 自动附带 WebView2Loader.dll 则实际无害，需确认 bundler 行为）
 
-### BUG-A-018
+### BUG-A-018（✅ 已修复 2026-09-05：S4 卸载与 S1 同构走 PowerShell Start-Process -Wait，规避 MSYS 参数转换坑）
 
 - 文件: tauri-shell/scripts/windows-smoke.sh:73
 - 问题: S4 卸载直接 `"$UNINSTALL" /S` 从 Git Bash 调起——而本脚本 20-22 行注释明确指出 MSYS 参数转换会改写 /S 导致安装器进不了静默模式、无头会话挂起，S1 因此改用 PowerShell Start-Process；S4 却裸用同一危险写法，卸载器收到的参数可能被转成 "S:" 之类而打开 GUI，CI 无头会话挂起（|| true 只兜退出码，兜不住挂起）
@@ -237,7 +245,7 @@
 - 严重度: C
 - 状态: 待复查（触发依赖目录树内多匹配，属竞态型边界）
 
-### BUG-A-020
+### BUG-A-020（✅ 已修复 2026-09-05：sidecar-boot-probe 三件套：stdin error 监听、http timeout+destroy、exit fail-fast）
 
 - 文件: tauri-shell/scripts/sidecar-boot-probe.js:60,72,45
 - 问题: 与 BUG-A-001/002 同型三处：child.stdin 无 error 监听（sidecar 早死后写 boot.start/shutdown → EPIPE 崩溃）；http.get timeout:10000 只监听 'error' 不监听 'timeout'，对端挂起则等到总超时才失败；child 'exit' 只打印不 fail-fast
@@ -245,7 +253,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-A-021
+### BUG-A-021（✅ 已修复 2026-09-05：rescue-smoke/ui-verify-smoke/verify-shim 三处 httpGetJson 统一补 timeout+destroy）
 
 - 文件: rescue-smoke.js:20-24 / ui-verify-smoke.js:22-26 / verify-shim-fix.cjs:18-22
 - 问题: 三处 httpGetJson 复刻同一缺陷：timeout 选项仅 socket 级、未监听 'timeout'，CDP 端点 accept 后不响应时 Promise 永不 settle，pageTarget/waitForMainPage/waitForTarget 轮询循环被 await 卡死，外层超时预算失效
@@ -257,7 +265,7 @@
 
 # B区:tauri-shell Rust 与 sidecar 排查片段
 
-### BUG-B-001
+### BUG-B-001（✅ 已修复 2026-09-05：/died 三条 URL 构造路径统一 percent_encode（含 server-died 的 code/log），并新增配对 percent_decode 闭环）
 
 - 文件: tauri-shell/src/main.rs:1779
 - 问题: boot.start 失败时构造 /died 页 URL,log 参数仅替换引号与换行,未做 URL 编码;错误消息含 `&`/`?`/`#` 等字符时会截断或破坏查询串,Url::parse 可能失败导致 /died 页不显示,用户无任何诊断入口。sidecar-spawn 失败路径(main.rs:1811)同样未编码。
@@ -297,7 +305,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-B-006
+### BUG-B-006（✅ 已修复 2026-09-05：Sidecar::call 写失败路径回滚 pending 表，oneshot 不再泄漏）
 
 - 文件: tauri-shell/src/main.rs:461-466
 - 问题: `Sidecar::call` 先向 pending 表插入 id,随后 write_all/flush 失败直接 return Err,pending 中残留该 id 的 oneshot::Sender,永不清理(id 也永久消耗);长期运行写入失败多次会造成哈希表膨胀。
@@ -321,7 +329,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-B-009
+### BUG-B-009（✅ 已修复 2026-09-05：壳层 files.open 拦截器改调 sidecar 的 files.open（自带授权+打开），删除对不存在的 files.authorize-open 的调用）
 
 - 文件: tauri-shell/src/main.rs:733
 - 问题: 壳层 files.open 拦截器调用 sidecar 方法 `files.authorize-open`,但 sidecar(及 dsh-desktop/lib)不存在该方法(全仓库 .ts 无匹配);sidecar 实现的是 `files.open`(server.ts:796,自带授权+打开)。调用方收到 method-not-found 错误,壳层文件打开链路必然失败。
@@ -345,7 +353,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-B-012
+### BUG-B-012（✅ 已修复 2026-09-05：详情展开改 await refresh() 重渲染后再 loadFiles 串行，消除旧 DOM 写入竞态）
 
 - 文件: tauri-shell/sidecar/snapshot-ui.ts:603-605
 - 问题: 「详情」展开文件清单存在竞态:`void refresh()` 与 `void loadFiles(id)` 并发,refresh 拉完 overview 后重渲染整棵树(新建 "加载中…" 占位盒),若 loadFiles 的 detail 应答先返回,内容写进的是已被替换掉的旧 DOM(`box.isConnected` 检查使其静默 no-op),新占位盒永远停在「加载中…」。
@@ -353,7 +361,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-B-013
+### BUG-B-013（✅ 已修复 2026-09-05：export-logs 平台分支补全：桌面目录 os.homedir 解析，darwin/linux zip 后端 zip -qr，win32 维持 PowerShell）
 
 - 文件: tauri-shell/sidecar/rescue-integration.ts:290-293
 - 问题: `os_home_desktop` 只认 `USERPROFILE`,否则回退 `C:\Users\Public`;Linux/macOS 上该变量不存在,export-logs 的 zip 落盘路径非法必然失败。且 `buildZipCommand`(line 254)对非 darwin 一律用 `powershell`,Linux 无此命令 → spawn error → zip 不存在 → 报错「打包失败」。即 export-logs 在非 Windows 平台整体不可用。
@@ -369,7 +377,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-B-015
+### BUG-B-015（✅ 已修复 2026-09-05：桥 call() 超时作废 pending 时同步按帧 id 移除 queue 排队帧，重连不再重放已放弃的副作用调用）
 
 - 文件: tauri-shell/sidecar/bridge.ts:56-68
 - 问题: `call()` 在 WS 未就绪时把帧推入 queue,30s 超时仅删 pending 不删 queue 项;重连后 onopen 把 queue 全部 flush,这些「调用方早已放弃」的帧仍会被 sidecar 执行 —— 对有副作用的方法(boot.restart/snapshot.delete 等)意味着用户取消的操作被延迟重放。
@@ -401,7 +409,7 @@
 - 严重度: M
 - 状态: 待复查(取决于 boot.start 实际耗时分布)
 
-### BUG-B-019
+### BUG-B-019（⏸ 暂缓 2026-09-05：已核实 src 内确无 http:: 使用；因本机 cargo 不可用无法同步 Cargo.lock，删除会使 CI --locked 失败，待工具链修复后随 cargo 一起清理）
 
 - 文件: tauri-shell/Cargo.toml:18
 - 问题: 声明了 `http = "1"` 依赖,但 src 内无任何 `http::`/`use http` 使用 —— 未使用依赖,与代码不匹配(CI 若开 unused-crate-dependencies lint 会报)。
@@ -417,7 +425,7 @@
 - 严重度: C
 - 状态: 待复查(发射方可能在未纳入审查的 dsh-desktop lib 运行路径)
 
-### BUG-B-021
+### BUG-B-021（✅ 已修复 2026-09-05：encode_back 改用 percent_encode 完整编码，消费侧 URLSearchParams/percent_decode 解码闭环）
 
 - 文件: tauri-shell/src/main.rs:1247-1249
 - 问题: `encode_back` 只编码 `\ : / 空格`,不编码 `? & # %`;current_web_url 若带查询串(如 `http://127.0.0.1:port/path?a=1&b=2`),拼进 /update、/about 的 back= 参数后 `&` 会截断 back 值,页面返回按钮跳到残缺的 URL。
@@ -429,7 +437,7 @@
 
 # C区:dsh-desktop 根级模块 排查片段
 
-### BUG-C-001
+### BUG-C-001（✅ 已修复 2026-09-05：全仓确认无引用后删除根级孤儿 shortcut-maintenance.ts（逻辑在 lib/））
 
 - 文件: dsh-desktop/shortcut-maintenance.ts:1
 - 问题: 该文件被 tsconfig exclude,且根目录不存在同名 shortcut-maintenance.js;全仓无任何模块 require 根级该文件(实际使用的是 lib/shortcut-maintenance.ts/.js)。属残留孤儿文件,与 .js 发散比对无从谈起——一旦有人按惯例 require('./shortcut-maintenance.js') 将直接 MODULE_NOT_FOUND 崩溃。
@@ -441,7 +449,7 @@
 
 - stream-write-guard.ts 与 stream-write-guard.js 逻辑逐行一致,无发散;引用方(lib/server.ts、lib/boot.ts、lib/state.ts)接口匹配。
 
-### BUG-C-002
+### BUG-C-002（✅ 已修复 2026-09-05：builtin-collision 的 package.json/cordis.patch.yml 改 tmp+rename 原子写）
 
 - 文件: dsh-desktop/builtin-collision.ts:178
 - 问题: removeMarketDuplicate 用 fs.writeFileSync 直接覆写 profile 的 package.json(:178)与 cordis.patch.yml(:188),非原子写;进程在写入中途崩溃/断电会留下截断的 JSON/YAML,导致 profile 无法加载。同仓 compact-preset-migrate.ts:115-117 已采用 tmp+rename 原子写,说明项目有此意识,此处遗漏。
@@ -457,7 +465,7 @@
 - 严重度: M
 - 状态: 待复查(取决于 soul-md 行是否真会出现 name→disabled→config 形态;顶层向导行可带 disabled,风险成立)
 
-### BUG-C-004
+### BUG-C-004（✅ 已修复 2026-09-05：preset-sync 的 settings.yaml 改 tmp+rename 原子写）
 
 - 文件: dsh-desktop/preset-sync.ts:127
 - 问题: ensureDefaultAgentPreset 用 fs.writeFileSync 直接覆写 settings.yaml(:127 与 :133),非原子写;写入中途崩溃会截断用户全部设置。与 BUG-C-002 同类。
@@ -481,7 +489,7 @@
 - 严重度: M
 - 状态: 待复查(若产品只面向国内用户可视为可接受,但与注释规格矛盾)
 
-### BUG-C-007
+### BUG-C-007（✅ 已修复 2026-09-05：balance fetchJson 补 res.on(error, reject)）
 
 - 文件: dsh-desktop/balance.ts:192
 - 问题: fetchJson 只监听 req 的 'error',未监听 res(IncomingMessage)的 'error';响应流中途出错(如连接重置发生于 headers 之后)时 res 的 'error' 事件无监听器,按 Node 语义会作为未捕获异常抛出,可击穿主进程。
@@ -497,7 +505,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-C-009
+### BUG-C-009（✅ 已修复 2026-09-05：rescue-agent chatCompletions 补 res 错误监听走既有 reject 链）
 
 - 文件: dsh-desktop/rescue-agent.ts:699
 - 问题: chatCompletions 的 doFetch 与 BUG-C-007 同型:只监听 req 'error',未监听 res 'error';响应流错误会成未捕获异常。
@@ -513,7 +521,7 @@
 - 严重度: M
 - 状态: 待复查(api.github.com 拒 %2F 是已知行为;若有 GitHub 源插件在 PLUGIN_UPDATE_SOURCES 中即确认功能失效)
 
-### BUG-C-011
+### BUG-C-011（✅ 已修复 2026-09-05：scoped 主包跳过改 path.relative 精确匹配，只跳过主包自身所在 scope 条目，不误伤其他 scope）
 
 - 文件: dsh-desktop/plugin-updater.ts:484
 - 问题: 合并依赖时跳过主包的判断 `e.name === path.basename(installed)` 只对非作用域包成立。作用域包(如 @deepseek-ai/dsh-xxx,内置插件的主流形态)installed=<staging>/node_modules/@deepseek-ai/dsh-xxx,basename 是 'dsh-xxx',而 stagedNms 顶层条目是 '@deepseek-ai' —— 比较恒失败,整个 @scope 目录(含主包自己的未合并原始拷贝)被 copyTree 进 merged/node_modules/@scope/,形成主包第二副本,与注释「主包已合并跳过」的意图相悖,可能造成模块双实例/遮蔽。
@@ -537,7 +545,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-C-014
+### BUG-C-014（✅ 已修复 2026-09-05：logStream 挂 error 监听降级（记日志+置空句柄），后续 write 走空值守卫）
 
 - 文件: dsh-desktop/updater.ts:398
 - 问题: applyUpdate 创建的 logStream(fs.createWriteStream)未挂 'error' 监听;写盘失败(磁盘满/权限)时 WriteStream 异步发出 'error' 事件,无监听器即未捕获异常,可击穿 Electron 主进程。runNpm 的 onChunk(:286)持续 logStream.write 加剧触发面。
@@ -549,7 +557,7 @@
 
 # D区:dsh-desktop/lib 顶层模块 排查片段
 
-### BUG-D-001
+### BUG-D-001（✅ 已修复 2026-09-05：锁创建改 fs.writeFileSync(flag:'wx') 原子排他，EEXIST 按「自 PID 放行/死锁自愈/活锁拒绝」分流，调用方复查 isAnotherDshWebRunning 双保险）
 
 - 文件: dsh-desktop/lib/server-lock.ts:36-59（配合 server.ts:119-128）
 - 问题: 跨实例进程锁存在 check-then-act 竞态：两个实例同时启动时可双双通过 `isAnotherDshWebRunning()` 检查，随后 `createDshWebLock()` 用 `fs.writeFileSync`（无排他标志）互相覆盖 PID，导致两个 dsh web 进程并发写同一 DSH_HOME——正是该锁要防的会话日志损坏（Issue #22）。
@@ -557,7 +565,7 @@
 - 严重度: S
 - 状态: 确认
 
-### BUG-D-010
+### BUG-D-010（✅ 已修复 2026-09-05：超时强杀改调 proc.ts 的 killTree（IS_WIN/POSIX 双分支））
 
 - 文件: dsh-desktop/lib/market-ops.ts:189-196
 - 问题: 排队任务 5 分钟超时的强杀使用 Windows 专有 `taskkill`（未做 IS_WIN 分支）——POSIX 上 spawn('taskkill') 立即失败落入 catch，超时子进程（pnpm 卡死）永远不被终止，close 事件不触发，boot 链 `processPendingMarketOps()` 的 Promise 永不 resolve → 启动流程整体挂死。
@@ -565,7 +573,7 @@
 - 严重度: M
 - 状态: 确认（仅影响非 Windows 宿主；Windows 主目标不受影响）
 
-### BUG-D-011
+### BUG-D-011（✅ 已修复 2026-09-05：run-state.json 写入改 tmp+rename 原子替换）
 
 - 文件: dsh-desktop/lib/run-state.ts:32-66
 - 问题: run-state.json 的写入（writeRunState / markCleanExit）均为 `fs.writeFileSync` 直写目标文件，无 tmp+rename 原子替换——主进程崩溃/断电发生在写中途时得到截断 JSON；detectUncleanPreviousRun 解析失败按「首次运行」吞掉，看门狗（独立进程）读到损坏状态文件 likewise 失去崩溃判定依据。项目内 registry.json/pending.json（feature-pack.ts:493-499）均已用 tmp+rename，此处不一致。
@@ -573,7 +581,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-D-012
+### BUG-D-012（✅ 已修复 2026-09-05：copyPluginPackage 复用 .eac-copy-stamp 戳记：源包变化时整目录 rm+copy 重建，消灭已下线文件残留）
 
 - 文件: dsh-desktop/lib/plugin-copy.ts:234-262
 - 问题: copyPluginPackage 只做「存在才覆盖」拷贝，从不删除目标侧已下线的文件——插件版本升级删掉某文件后，profile node_modules 里的旧文件永久残留（含 .js/.dll 等可被 loader 拣起的 stale 副本），与文件头「幂等」声明不符。
@@ -581,7 +589,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-D-013
+### BUG-D-013（✅ 已修复 2026-09-05：导航白名单同时接受 ::1 与 WHATWG 序列化 [::1]）
 
 - 文件: dsh-desktop/lib/window.ts:90
 - 问题: `target.hostname === '::1'` 恒为 false——WHATWG URL 对 IPv6 字面量的 hostname 带方括号（'[::1]'），webUrl 未就绪期间（恢复页/加载态）来自 http://[::1]:port 的导航会被导航围栏误杀。
@@ -589,7 +597,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-D-014
+### BUG-D-014（✅ 已修复 2026-09-05：imagePasteSave 先按 base64 串长估算超限拒绝，再解码）
 
 - 文件: dsh-desktop/lib/plugin-manager-core.ts:296-303
 - 问题: imagePasteSave 先做 `Buffer.from(base64)` 全量解码、后查 15MB 上限——超限 data URL（如数百 MB base64 串）在解码阶段即占满内存，大小闸门形同虚设；正则 `([A-Za-z0-9+/=]+)$` 对超长输入还有回溯扫描成本。
@@ -597,7 +605,7 @@
 - 严重度: C
 - 状态: 确认
 
-### BUG-D-007
+### BUG-D-007（✅ 已修复 2026-09-05：updateBusy/clientUpdateBusy 置位提前到函数入口（quitting 检查后立即），try/finally 保证失败复位）
 
 - 文件: dsh-desktop/lib/update-flow.ts:143-199（runClientUpdateFlow 355-428 同构）
 - 问题: 防重入标志 `state.updateBusy` 在「发现新版本」确认弹窗**之后**才置位（199 行）。弹窗等待期间（用户可能停留任意久）第二次触发（托盘菜单/6h 定时器/15s 启动定时器）会通过 145 行的 busy 检查，出现两个并行更新流：两份确认弹窗、两次 applyUpdate 写同一 overlay 目录。clientUpdateBusy 同样滞后置位。
@@ -605,7 +613,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-D-008
+### BUG-D-008（✅ 已修复 2026-09-05：detectExternalDsh 改异步 execFile（promisify），12s 查询不再冻结主进程事件循环，返回值语义不变）
 
 - 文件: dsh-desktop/lib/watchdog-boot.ts:119-122
 - 问题: `detectExternalDsh` 在主进程用 `execSync` 跑 PowerShell CIM 查询（timeout 12000ms）——junction 巡检 tick 命中时主进程事件循环最长冻结 12 秒（窗口/托盘/IPC 全部无响应）。函数签名是 Promise 但内部完全同步，异步外形无实际收益。
@@ -621,7 +629,7 @@
 - 严重度: M
 - 状态: 待复查（dsh web 端口绑定失败后的行为需确认；killTree 未 await 已由代码确认）
 
-### BUG-D-006
+### BUG-D-006（✅ 已修复 2026-09-05：预览服务补 Host 头校验（仅 127.0.0.1/localhost/[::1]，封 DNS rebinding）+ isUnderFileRoots 路径围栏（消费方核实均为会话 cwd 项目文件））
 
 - 文件: dsh-desktop/lib/preview.ts:56-104
 - 问题: 预览静态服务无 Host 头校验、无一次性 token，且对**任意绝对路径**放行（唯一约束是 path.isAbsolute）——本机任意进程可经 `http://127.0.0.1:<port>/C:/...` 读取用户任意文件；浏览器侧还存在 DNS rebinding 通道（恶意站点域名重绑定到 127.0.0.1 后，页面以合法 Host 访问该端口读本地文件）。端口随机但可被本机枚举（netstat/端口扫描）。同项目已有 isUnderFileRoots 围栏却未在此应用。
@@ -629,7 +637,7 @@
 - 严重度: S
 - 状态: 待复查（若端口从未暴露给不可信渲染内容且仅本机同用户进程可达，实际风险降级为 M；DNS rebinding 需浏览器配合，建议补 Host 校验）
 
-### BUG-D-004
+### BUG-D-004（✅ 已修复 2026-09-05：updatePack 移除不再引用插件处补 await removePlugin）
 
 - 文件: dsh-desktop/lib/feature-pack.ts:958
 - 问题: `updatePack` 移除不再引用插件时 `removePlugin(old, profile)` 缺少 await——Promise 悬空：后续 `restoreArtifactsFor` 与注册表写回不等待 pnpm remove 完成（顺序竞态），且 remove 失败成为 unhandledRejection（installPack/uninstallPack 中同名调用均有 await，可对照）。
@@ -637,7 +645,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-D-005
+### BUG-D-005（✅ 已修复 2026-09-05：installPack catch 消费 snapshotRef：有快照走 restoreSnapshot，无快照能力退化逐个 removePlugin+restoreArtifactsFor 并清理包数据目录）
 
 - 文件: dsh-desktop/lib/feature-pack.ts:844-853（installPack catch 分支）
 - 问题: 安装中途失败（如插件装配成功后 preset/skill 同步抛错）只删除包数据目录，不回滚已执行的 `dsh plugin add`——文件头红线声明「安装/更新事务化：失败按保护中心快照回滚并清理半成品」，实际 catch 中无 restoreSnapshot / removePlugin，留下已安装但未入册的孤儿插件（注册表无记录，uninstallPack 也清不掉）。
@@ -665,7 +673,7 @@
 
 # E区:dsh-desktop/lib 子目录与 shared 排查片段
 
-### BUG-E-001
+### BUG-E-001（✅ 已修复 2026-09-05：concatFiles 写流 error 监听常驻挂接（出错即 reject+destroy），分片删除推迟到合并成功之后，错误路径保留现场）
 
 - 文件: dsh-desktop/lib/client-update/download.ts:269-284
 - 问题: `concatFiles` 中写出流 `out`（`fs.createWriteStream(dest)`）的 `'error'` 监听器直到全部分片拼接循环结束后（第 281 行）才挂接。若 `out` 在循环期间出错（如磁盘满 ENOSPC、目标路径不可写），该 `'error'` 事件无监听器 → Node 对无监听器的 error 事件直接抛出未捕获异常 → 主进程崩溃；且此前已 `rmSync` 删掉的分片（第 278 行先删源分片）造成已下载数据丢失，合并半途的 dest 成为截断文件残留。
@@ -673,7 +681,7 @@
 - 严重度: S
 - 状态: 确认
 
-### BUG-E-002
+### BUG-E-002（✅ 已修复 2026-09-05：shell.exec 退出码区分成功与异常终止：有 err 且 code 非 number 映射 -1，新增可选 signal 透传（超时/信号终止不再误判为 0））
 
 - 文件: dsh-desktop/lib/extension-host/sdk/index.ts:226-229
 - 问题: SDK `shell.exec` 的退出码映射：`exec` 回调中 `err.code` 仅在子进程以非零码退出时是 number；当进程被 timeout 强杀、被信号终止或 spawn 失败时 `err.code` 为 undefined/null/字符串，代码 `typeof err?.code === 'number' ? err.code : 0` 一律回落为 0 —— 插件收到 `{code: 0}` 把失败（超时被杀/信号终止）误判为成功。
@@ -709,7 +717,7 @@
 
 # F区:dsh-desktop scripts/test/native 排查片段
 
-### BUG-F-001
+### BUG-F-001（✅ 已修复 2026-09-05：e2e-full 成功路径改同步 rmSync 后再 exit，临时根不再泄漏）
 
 - 文件: dsh-desktop/scripts/e2e-full.ts:563-571
 - 问题: 成功路径下临时根目录(root,可能含数 GB 插件闭包副本)永远不会被删除。`setTimeout(..., 500)` 调度 rmSync 后立即同步执行 `process.exit(code)`,定时器回调根本没有机会触发。
@@ -717,7 +725,7 @@
 - 严重度: M(磁盘泄漏,每次成功跑 e2e 留下数 GB 临时目录)
 - 状态: 确认
 
-### BUG-F-002
+### BUG-F-002（✅ 已修复 2026-09-05：e2e-full 异常路径补 mock server close + taskkill 被测进程树再 exit(1)）
 
 - 文件: dsh-desktop/scripts/e2e-full.ts:574-577
 - 问题: `main()` 抛出未捕获异常时直接 `process.exit(1)`,不经过 finish():已 spawn 的应用进程(runExe)与 mock http server 均不回收,被测 exe 残留运行并占用 DEBUG_PORT/MOCK_PORT,导致下一次运行被 221 行的"已有同名 exe 在运行"守卫拒绝。
@@ -725,7 +733,7 @@
 - 严重度: M(进程泄漏/端口占用,中断后续 e2e)
 - 状态: 确认
 
-### BUG-F-003
+### BUG-F-003（✅ 已修复 2026-09-05：e2e-v4 成功路径同步 rmSync 后再 exit）
 
 - 文件: dsh-desktop/scripts/e2e-v4.ts:476-485
 - 问题: 与 BUG-F-001 同型:成功路径用 `setTimeout(100ms)` 调度 `fs.rmSync(root)` 清理数 GB 临时目录,随后 `finish()` 立即 `process.exit`,回调永不执行,临时目录必然残留。
@@ -733,7 +741,7 @@
 - 严重度: M(磁盘泄漏)
 - 状态: 确认
 
-### BUG-F-004
+### BUG-F-004（✅ 已修复 2026-09-05：e2e-v4 异常路径补杀 appPid 进程树再 exit(1)）
 
 - 文件: dsh-desktop/scripts/e2e-v4.ts:494-497
 - 问题: `main()` 异常时 catch 直接 `process.exit(1)`,不杀已 spawn 的应用进程(appPid),被测 exe 残留并占用 CDP 端口,下一次运行被 166 行单实例守卫拒绝。仅 325-331 的就绪失败分支做了 process.kill,异常路径没有。
@@ -741,7 +749,7 @@
 - 严重度: M(进程泄漏/假"已运行"阻塞后续测试)
 - 状态: 确认
 
-### BUG-F-006
+### BUG-F-006（✅ 已修复 2026-09-05：bench-boot 握手路径 try/finally 补 child.kill()）
 
 - 文件: dsh-desktop/scripts/bench-boot.ts:204-222
 - 问题: spawnAndInit 的 init 握手超时/失败路径不杀子进程:`await ready` 抛出时直接逃出函数,`child.kill()`(220 行)只在成功路径执行。Windows 上父进程退出不回收非 detached 子进程,失败的 host-bootstrap node 进程泄漏。
@@ -749,7 +757,7 @@
 - 严重度: C(开发工具,失败场景下 node 进程残留)
 - 状态: 确认
 
-### BUG-F-007
+### BUG-F-007（✅ 已修复 2026-09-05：删除按映像名的全局 taskkill（不再误杀真实实例）；实现 --clean=<root>：限定 dsh-rescue-demo-* 目录 + 命令行匹配精确回收）
 
 - 文件: dsh-desktop/scripts/demo-rescue-ai.cjs:63-65,71
 - 问题: 脚本启动即 `taskkill /IM "Deepseek Harness EAC.exe" /T /F`,按映像名强杀本机**所有**实例——包括用户正在使用的真实应用(非演示副本),无任何确认提示。另外 232 行提示的 `--clean=<root>` 参数在脚本中没有任何处理逻辑(ARGS 解析后未使用),清理说明无效。
@@ -757,7 +765,7 @@
 - 严重度: C(误杀用户真实会话的风险;文档误导)
 - 状态: 确认
 
-### BUG-F-008
+### BUG-F-008（✅ 已修复 2026-09-05：verify-bugfix-cdp 死三元改 opened === true，设置按钮缺失不再假通过）
 
 - 文件: dsh-desktop/scripts/verify-bugfix-cdp.js:163
 - 问题: `check('设置页已打开', opened === true || opened === 'no-button' ? !!opened : !!opened, ...)` —— 三元两个分支都是 `!!opened`,且 `'no-button'` 是真值字符串:当页面里**根本找不到设置按钮**时该检查反而通过(假阳性),后续 A-E 断言在错误页面上继续跑。
@@ -765,7 +773,7 @@
 - 严重度: M(验证脚本假通过,掩盖设置入口缺失回归)
 - 状态: 确认
 
-### BUG-F-009
+### BUG-F-009（✅ 已修复 2026-09-05：sim-client-update 按成败分支：成功同步 rmSync，失败保留现场）
 
 - 文件: dsh-desktop/scripts/sim-client-update.ts:128-135
 - 问题: 与 BUG-F-001 同型:`setTimeout(200ms)` 调度 `fs.rmSync(root)`(含 65MB 假安装包与下载产物)后立即 `process.exit`,临时目录必然残留;且 rmSync 调度在失败路径也执行——失败现场被删,与 e2e 系列"失败保留现场"的约定相反。
@@ -773,7 +781,7 @@
 - 严重度: M(磁盘残留 + 失败现场丢失)
 - 状态: 确认
 
-### BUG-F-010
+### BUG-F-010（✅ 已修复 2026-09-05：feature-pack-cli 临时包 finally 清理（EXIT_LOCK 排队路径按 pending.json 消费语义保留））
 
 - 文件: dsh-desktop/scripts/feature-pack-cli.ts:98-117
 - 问题: fetchPackToTemp 对 URL 下载把包写入 `os.tmpdir()/dshpack-<pid>-<name>`,全文件(install/update/inspect)无任何删除逻辑——成功路径每次泄漏一个 .dshpack 临时文件(功能包可达数十 MB)。仅 EXIT_LOCK 排队路径需要保留该文件,成功/失败路径都应清理。
@@ -813,7 +821,7 @@
 - 严重度: C(极小概率误杀第三方进程)
 - 状态: 待复查
 
-### BUG-F-015
+### BUG-F-015（✅ 已修复 2026-09-05：watchdog-behavior 死断言改为限流计数真实断言组（重启尝试/15s 窗口 ≤2/未达 cap 不出现上限日志））
 
 - 文件: dsh-desktop/test/watchdog-behavior.test.ts:114
 - 问题: `assert.ok(!log.includes('too many restarts') || true)` —— `|| true` 使断言恒真,是死断言:无论 watchdog 是否触发重启上限,该行都通过,给人"已覆盖重启上限行为"的假象。
@@ -821,7 +829,7 @@
 - 严重度: C(假覆盖)
 - 状态: 确认
 
-### BUG-F-016
+### BUG-F-016（✅ 已修复 2026-09-05：stable-port 断言收紧为 port > 0 && 不在受限端口表）
 
 - 文件: dsh-desktop/test/stable-port.test.ts:145,156
 - 问题: 两处断言 `assert.ok(port === 0 || !CHROMIUM_RESTRICTED_PORTS.has(port))` 允许 port===0 通过:chooseStableWebPort 若因 bug 返回 0(失败语义),这两个用例照样通过(假阳性)。同文件 85 行已证明有效端口应为 >0。
@@ -829,7 +837,7 @@
 - 严重度: C(假阳性窗口)
 - 状态: 确认
 
-### BUG-F-017
+### BUG-F-017（✅ 已修复 2026-09-05：logger-redact 条件断言改无条件：gotWarn 必须存在且含 boom）
 
 - 文件: dsh-desktop/test/logger-redact.test.ts:139
 - 问题: `if (gotWarn) assert.ok(gotWarn.message.includes('boom'), ...)` —— 条件断言:若被测代码从未记录 warn(gotWarn 为 null),断言整段跳过,测试照样通过。该用例本意是"异常 getter 必须产生单条 warn 记录",实际对"完全无告警"这一回归零防护。另外 98 行用例名写 `-> 1***8000` 而断言为 `138****8000`,名实不符(仅文档误导)。
@@ -837,7 +845,7 @@
 - 严重度: C(假阳性窗口)
 - 状态: 确认
 
-### BUG-F-018
+### BUG-F-018（✅ 已修复 2026-09-05：diagnostics-zip PowerShell 双引号转义笔误改 '""'）
 
 - 文件: dsh-desktop/test/diagnostics-zip.test.ts:115
 - 问题: `ps.replace(/"/g, '"')` —— 替换串与目标完全相同,是恒等 no-op(本意显然是对双引号做命令行转义)。当前 ps 文本恰好不含双引号所以没炸,但一旦 zipPath/outDir 或脚本片段引入 `"`,powershell -Command 的引号配对即被破坏,解压静默失败。
@@ -845,7 +853,7 @@
 - 严重度: C(潜在脆弱点)
 - 状态: 确认
 
-### BUG-F-019
+### BUG-F-019（✅ 已修复 2026-09-05：supervisor-phase1 死断言改为断言 ok===false 且 error 含「无可用回滚点」）
 
 - 文件: dsh-desktop/test/supervisor-phase1.test.ts:194
 - 问题: `assert.ok(installer.rollbackSdkPlugin('fence-ext').ok || true)` —— 与 F-015 同型死断言,`|| true` 恒真;rollbackSdkPlugin 返回 false(回滚失败)也通过。
@@ -853,7 +861,7 @@
 - 严重度: C(假覆盖)
 - 状态: 确认
 
-### BUG-F-005
+### BUG-F-005（✅ 已修复 2026-09-05：e2e-mario 成功路径同步 rmSync；异常路径补 taskkill 子进程树）
 
 - 文件: dsh-desktop/scripts/e2e-mario.ts:252-261,264-267
 - 问题: 与 BUG-F-001/002 同型双问题:(a) finish() 成功路径 `setTimeout(500ms)` 调度 rmSync 后立即 `process.exit`,root 永不清理;(b) `main().catch` 异常路径不 taskkill 子进程,被测 exe 残留。
@@ -923,7 +931,7 @@
 - 严重度: M
 - 状态: 确认
 
-### BUG-G-102
+### BUG-G-102（✅ 已修复 2026-09-05：installDir 优先取 process.env.DSH_SHELL_EXE 所在目录（与 sidecar getExecDir 同源），回退 execPath）
 
 - 文件: dsh-desktop/lib/update-flow.ts:340(clientUpdateOpts().installDir)
 - 问题: `installDir = path.dirname(process.execPath)`——Tauri sidecar 宿主下 `process.execPath` 是 **node 二进制**而非壳 exe(server.ts:288 自己用 `DSH_SHELL_EXE` 求壳目录即是反证)。`runClientUpdateFlow`:491 与 `offerPendingClientUpdate`:551 的 applyUpdate 会把客户端更新的备份/原子替换做到 node 所在目录,**更新错目标目录**(轻则更新无效,重则污染 node 运行时目录)。sidecar 的 clientUpdateHost.getExecDir 才是正确实现,但 lib 版未消费它。

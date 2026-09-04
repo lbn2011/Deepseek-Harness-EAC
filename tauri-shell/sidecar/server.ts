@@ -133,9 +133,11 @@ const showBoxFallback = async (opts: Record<string, unknown>) => {
 };
 const notifyFallback = (n: { title: string; body: string }) => say('[notify] ' + n.title + ': ' + n.body);
 // .lnk 驱动（硬门槛④）：PowerShell WScript.Shell COM 实现，接口对齐 legacy-shell
-// shell.readShortcutLink / writeShortcutLink（同步、失败抛错）。路径经环境
+// shell.readShortcutLink / writeShortcutLink（异步、失败抛错）。路径经环境
 // 变量传入，规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
-function psLnkRead(p: string): Record<string, unknown> {
+// 用异步 execFile：sidecar 是单线程 JSON-RPC 服务，同步等待 8-10s 会停摆全部
+// stdio RPC。
+async function psLnkRead(p: string): Promise<Record<string, unknown>> {
   const script = String.raw`
 $ErrorActionPreference='Stop'
 try {
@@ -148,11 +150,15 @@ try {
 } catch { exit 1 }
 `;
   try {
-    const out = cp.execFileSync('powershell', ['-NoProfile', '-Command', script], {
-      env: { ...process.env, DSH_LNK_PATH: p },
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 8000,
+    const out = await new Promise<string>((resolve, reject) => {
+      cp.execFile('powershell', ['-NoProfile', '-Command', script], {
+        env: { ...process.env, DSH_LNK_PATH: p },
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 8000,
+      }, (err, stdout) => {
+        if (err) reject(err); else resolve(String(stdout));
+      });
     });
     return JSON.parse(out) as Record<string, unknown>;
   } catch (e) {
@@ -160,7 +166,7 @@ try {
   }
 }
 
-function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): void {
+async function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): Promise<void> {
   const script = String.raw`
 $ErrorActionPreference='Stop'
 $lnk = $env:DSH_LNK_PATH
@@ -187,9 +193,20 @@ try {
     DSH_LNK_DESC: opts.description == null ? '' : String(opts.description),
     DSH_LNK_ICON: opts.icon == null ? '' : String(opts.icon),
   };
-  const st = cp.spawnSync('powershell', ['-NoProfile', '-Command', script], { env, windowsHide: true, timeout: 10000 });
-  if (!st || st.status !== 0) {
-    throw new Error('lnk ' + String(op) + ' failed (' + String(st && st.status) + '): ' + p);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      cp.execFile('powershell', ['-NoProfile', '-Command', script], {
+        env,
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 10000,
+      }, (err) => {
+        if (err) reject(err); else resolve();
+      });
+    });
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException & { code?: number | string }).code;
+    throw new Error('lnk ' + String(op) + ' failed (' + String(code ?? '?') + '): ' + p);
   }
 }
 
@@ -240,8 +257,10 @@ hostCtxMod.initHostCtx({
   shortcuts: {
     // PowerShell 实现返回 Record<string, unknown>（过渡 shortcutsMod 同款），
     // 结构即 HostShortcutLink 子集，收窄桥接给统一模块。
-    readLink: (p) => psLnkRead(p) as HostShortcutLink,
-    writeLink: (p, operation, o) => psLnkWrite(p, operation, o as unknown as Record<string, unknown>),
+    readLink: async (p) => (await psLnkRead(p)) as HostShortcutLink,
+    writeLink: async (p, operation, o) => {
+      await psLnkWrite(p, operation, o as unknown as Record<string, unknown>);
+    },
   },
 });
 

@@ -18,9 +18,12 @@ const EXE = process.env.DSH_SMOKE_EXE || path.join(repo, 'tauri-shell', 'target'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const httpGetJson = (url) => new Promise((resolve, reject) => {
-  http.get(url, { timeout: 4000 }, (r) => {
+  const req = http.get(url, { timeout: 4000 }, (r) => {
     let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
-  }).on('error', reject);
+  });
+  // BUG-A-021：timeout 选项仅 socket 级 —— 监听 'timeout' 并中止，防止对端挂起时 Promise 永不 settle
+  req.on('timeout', () => req.destroy(new Error('timeout 4000ms')));
+  req.on('error', reject);
 });
 
 let failures = 0;
@@ -121,13 +124,15 @@ async function main() {
     // 初始启动 + 服务存活
     const t = await pageTarget((x) => x.type === 'page', 60000);
     c = cdp(t.webSocketDebuggerUrl); await c.ready;
+    // BUG-A-005：循环结果必须带出使用 —— 轮询耗尽即 FAIL，不再恒真
+    let bridgeOk = false;
     const t0 = Date.now();
     while (Date.now() - t0 < 60000) {
       const ok = await c.evalJs('typeof window.dshDesktop === "object" && typeof window.dshDesktop._call === "function"').catch(() => false);
-      if (ok === true) break;
+      if (ok === true) { bridgeOk = true; break; }
       await sleep(700);
     }
-    check('桥注入就绪', true);
+    check('桥注入就绪', bridgeOk);
     check('初始服务存活', await waitAlive(c));
     // 等主窗真正导航到 Web UI（web-ready → 主线程导航存在滞后）。
     let navOk = false;
@@ -184,9 +189,10 @@ async function main() {
     check('救援冒烟执行流', false, e.message);
   } finally {
     shell.kill();
+    // BUG-A-006：DSH_HOME 走 env 不进命令行，CommandLine 匹配恒空 —— 改为按
+    // 自己 spawn 的根 PID 树清理（taskkill /T 覆盖 sidecar/dsh web 子进程）
+    try { spawn('taskkill', ['/T', '/F', '/PID', String(shell.pid)], { windowsHide: true, stdio: 'ignore' }); } catch {}
     setTimeout(() => {
-      spawn('powershell', ['-NoProfile', '-Command',
-        `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'rescue-home' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`], { windowsHide: true, stdio: 'ignore' });
       process.exit(failures === 0 ? 0 : 1);
     }, 2500);
   }

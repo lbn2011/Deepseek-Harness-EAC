@@ -111,5 +111,12 @@ test('pid gone without marker → relaunches the exe, then stops at the restart 
     log: join(dir, 'watchdog.log'),
   }, 'relaunching app (attempt', 15000);
   assert.ok(/relaunching app \(attempt \d+\//.test(log), 'must relaunch the exe, got: ' + log);
-  assert.ok(!log.includes('too many restarts') || true); // cap not reached within window
+  // 真实断言（替换原 `|| true` 死断言）：看门狗有界重启行为 —— GRACE_MS=15s
+  // 限流下，runUntilLog 检测到首次重启即返回，窗口内最多 1~2 次尝试；计数
+  // 必须从 1 起步；未达 MAX_RESTARTS=5 前绝不允许出现放弃日志。
+  const attemptLines = log.match(/relaunching app \(attempt \d+\//g) || [];
+  assert.ok(attemptLines.length >= 1, 'must log at least one relaunch attempt, got: ' + log);
+  assert.ok(attemptLines.length <= 2, 'GRACE_MS(15s) throttle must bound relaunch frequency, got ' + attemptLines.length + ' attempts');
+  assert.ok(/relaunching app \(attempt 1\//.test(log), 'attempt numbering must start at 1, got: ' + log);
+  assert.ok(!log.includes('too many restarts'), 'must not give up while under the restart cap, got: ' + log);
 });

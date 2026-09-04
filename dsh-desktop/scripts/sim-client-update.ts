@@ -125,12 +125,15 @@ async function main(): Promise<void> {
   }
 
   server.close();
-  setTimeout(() => {
+  const failed = results.filter((r) => !r.ok).length;
+  // 仅成功路径同步清理临时目录；失败路径保留现场供排查（与 e2e 系列约定一致）
+  if (!failed) {
     try {
       fs.rmSync(root, { recursive: true, force: true });
     } catch { /* 清理失败不影响结果 */ }
-  }, 200);
-  const failed = results.filter((r) => !r.ok).length;
+  } else {
+    console.log(`[sim-update] 失败现场保留于 ${root}`);
+  }
   console.log(`\n[sim-update] 结果：${results.length - failed}/${results.length} 通过`);
   process.exit(failed ? 1 : 0);
 }

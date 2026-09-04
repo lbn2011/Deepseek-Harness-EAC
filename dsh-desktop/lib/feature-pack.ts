@@ -751,6 +751,8 @@ export async function installPack(args: {
   const opRef = args.opRef || null;
   const stage = (s: string): void => { ctx.log('feature-pack', '[install] ' + s); if (opRef) writeOpState(opRef, { stage: s, pct: null, message: s, done: false }); };
   let manifestId: string | null = null;
+  let snapshotRef: string | null = null;
+  const assembled: PackPluginRef[] = [];
   try {
     let manifest = args.manifest;
     let zip = args.zip;
@@ -786,7 +788,6 @@ export async function installPack(args: {
     }
 
     stage('保护中心快照');
-    let snapshotRef: string | null = null;
     if (ctx.snapshot) {
       try { snapshotRef = ctx.snapshot('pack:' + id + ':' + manifest.version)?.id || null; } catch (err) { ctx.log('feature-pack', '快照失败（继续）: ' + String((err as Error).message)); }
     }
@@ -802,7 +803,9 @@ export async function installPack(args: {
     for (const p of manifest.plugins || []) {
       const { source: src, pkg } = refSourceOf(p.ref);
       const installed = await assemblePlugin(p, profile);
-      plugins.push({ ref: p.ref, source: src, pkg, version: p.version || null, managed: src !== 'builtin', installed: installed.installed });
+      const ref: PackPluginRef = { ref: p.ref, source: src, pkg, version: p.version || null, managed: src !== 'builtin', installed: installed.installed };
+      plugins.push(ref);
+      assembled.push(ref);
     }
 
     // payload：presets / skills。
@@ -845,6 +848,23 @@ export async function installPack(args: {
     const e = err as Error & { lock?: boolean };
     ctx.log('feature-pack', '安装失败: ' + e.message);
     if (opRef) writeOpState(opRef, { stage: 'failed', pct: null, message: e.message, done: true, ok: false, error: e.message });
+    // 回滚半成品（红线：失败按保护中心快照回滚）：优先整体还原快照；
+    // 无快照能力时退而移除已装配插件（uninstallPack 同路径），避免留下
+    // 注册表无记录的孤儿插件。
+    if (snapshotRef && ctx.restoreSnapshot) {
+      try {
+        const r = ctx.restoreSnapshot(snapshotRef);
+        if (!r.ok) ctx.log('feature-pack', '快照回滚失败: ' + String(r.error || ''));
+      } catch (rerr) {
+        ctx.log('feature-pack', '快照回滚失败: ' + String((rerr as Error).message));
+      }
+    } else {
+      await snapshotArtifactsFor(profile);
+      for (const pl of assembled) {
+        try { await removePlugin(pl, profile); } catch { /* 尽力清理 */ }
+      }
+      try { await restoreArtifactsFor(profile); } catch { /* 尽力清理 */ }
+    }
     // 清理半成品包数据目录（未入册，无需回滚注册表）。
     if (manifestId) {
       try { fs.rmSync(packDataDir(home, manifestId), { recursive: true, force: true }); } catch { /* 尽力清理 */ }
@@ -955,7 +975,7 @@ export async function updatePack(id: string, args: { zipPath?: string; manifest?
       if (old.managed && !newRefs.includes(old.ref)) {
         if (refCount(reg, id, old.pkg || old.ref) === 0) {
           ctx.log('feature-pack', '更新移除不再引用插件: ' + (old.pkg || old.ref));
-          removePlugin(old, profile);
+          await removePlugin(old, profile);
         }
       }
     }

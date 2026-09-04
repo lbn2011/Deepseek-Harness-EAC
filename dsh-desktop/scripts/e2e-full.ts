@@ -51,6 +51,10 @@ const SKIP_MARKET = arg('skip-market') === '1';
 const SKIP_CHAT = arg('skip-chat') === '1';
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+// 模块级现场记录：main() 异常逃逸时 catch 分支据此做最小清理（杀被测 exe + 关 mock server）。
+let activeMock: MockRelease | null = null;
+let activeChild: ChildProcess | null = null;
+
 function tasklistPids(name: string): Set<number> {
   try {
     const out = execSync(`tasklist /FI "IMAGENAME eq ${name}" /FO CSV /NH`, { encoding: 'utf8', windowsHide: true });
@@ -272,6 +276,7 @@ async function main(): Promise<void> {
   } catch { /* 无缓存 */ }
 
   const mock = await startMockRelease(EXE);
+  activeMock = mock;
   const userDataDir = path.join(path.dirname(runExe), 'data');
   const readLog = (): string => {
     try {
@@ -309,6 +314,7 @@ async function main(): Promise<void> {
     },
     stdio: 'ignore', windowsHide: true,
   });
+  activeChild = child;
   const appPid = child.pid;
   console.log(`[full] 应用已启动 pid=${appPid}`);
 
@@ -560,11 +566,9 @@ function finish(code: number, root: string, mock: MockRelease | null, child: Chi
     } catch { /* 已退出 */ }
   }
   if (results.every((r) => r.ok)) {
-    setTimeout(() => {
-      try {
-        fs.rmSync(root, { recursive: true, force: true });
-      } catch { /* 清理失败保留现场 */ }
-    }, 500);
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch { /* 清理失败保留现场 */ }
   } else {
     console.log(`[full] 失败现场保留于 ${root}`);
   }
@@ -573,5 +577,15 @@ function finish(code: number, root: string, mock: MockRelease | null, child: Chi
 
 main().catch((err) => {
   console.error('[full] 异常: ' + ((err as Error)?.stack || err));
+  // 异常路径最小清理（对齐 finish()）：关 mock server + 杀被测 exe 进程树；
+  // 失败现场（root）保留，与 finish() 失败分支语义一致。
+  try {
+    if (activeMock && activeMock.server) activeMock.server.close();
+  } catch { /* 已关闭 */ }
+  if (activeChild && activeChild.exitCode === null) {
+    try {
+      spawn('taskkill', ['/pid', String(activeChild.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } catch { /* 已退出 */ }
+  }
   process.exit(1);
 });

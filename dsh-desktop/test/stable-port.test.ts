@@ -142,7 +142,8 @@ test('chooseStableWebPort: 偏好端口在受限列表时回落到空闲端口',
     ctx.saveSettings(ctx, { webPort: 6000 }); // 受限端口
     const port = await chooseStableWebPort(ctx);
     assert.notEqual(port, 6000, '不应返回受限端口');
-    assert.ok(port === 0 || !CHROMIUM_RESTRICTED_PORTS.has(port));
+    assert.ok(port > 0 && !CHROMIUM_RESTRICTED_PORTS.has(port),
+      '应返回非 0 且非受限的空闲端口，实际: ' + port);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -153,8 +154,8 @@ test('chooseStableWebPort: 空闲端口恰好命中受限端口时重试选非�
   try {
     const ctx = fakeCtx(dir);
     const port = await chooseStableWebPort(ctx, { maxFreeRetries: 20 });
-    assert.ok(port === 0 || !CHROMIUM_RESTRICTED_PORTS.has(port),
-      '即使经过多次重试，最终也不应落在受限列表中');
+    assert.ok(port > 0 && !CHROMIUM_RESTRICTED_PORTS.has(port),
+      '即使经过多次重试，最终也应返回非 0 且非受限的端口，实际: ' + port);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

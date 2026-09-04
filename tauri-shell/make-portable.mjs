@@ -12,7 +12,7 @@
 //   产物：Deepseek-Harness-EAC-<version>-portable.zip + SHA256SUMS.txt
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,12 @@ const rel = path.join(shellDir, 'target', 'release');
 const version = JSON.parse(readFileSync(path.join(repo, 'dsh-desktop', 'package.json'), 'utf8')).version || '0.0.0';
 
 const outArg = process.argv.indexOf('--out');
+// BUG-A-014：--out 缺参时 path.resolve(undefined) 会抛 TypeError —— 入口校验取值存在
+if (outArg > -1 && (outArg + 1 >= process.argv.length || process.argv[outArg + 1] === '')) {
+  console.error('[portable] --out 需要一个目录参数');
+  console.error('用法: node make-portable.mjs [--out <dir>]');
+  process.exit(2);
+}
 const outDir = outArg > -1 ? path.resolve(process.argv[outArg + 1]) : path.join(rel, 'portable');
 
 const exe = path.join(rel, 'dsh-eac-shell.exe');
@@ -70,9 +76,15 @@ execSync('powershell -NoProfile -Command "' + psZip.replace(/"/g, '\\"') + '"', 
   stdio: 'inherit',
 });
 
-console.log('[portable] 计算 SHA256');
+console.log('[portable] 计算 SHA256（流式，避免约 500MB zip 全量读入内存）');
 const hash = createHash('sha256');
-hash.update(readFileSync(zipPath));
+// BUG-A-015：改用 createReadStream 流式喂哈希，替代 readFileSync 全量读入
+await new Promise((resolve, reject) => {
+  const stream = createReadStream(zipPath);
+  stream.on('data', (chunk) => hash.update(chunk));
+  stream.on('error', reject);
+  stream.on('end', resolve);
+});
 const sha256 = hash.digest('hex').toUpperCase();
 writeFileSync(path.join(outDir, 'SHA256SUMS.txt'), `${sha256}  ${path.basename(zipPath)}\n`);
 

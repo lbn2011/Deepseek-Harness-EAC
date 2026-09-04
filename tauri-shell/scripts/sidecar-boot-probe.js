@@ -27,8 +27,11 @@ const child = spawn(process.execPath, [serverJs], {
 
 const t0 = Date.now();
 let buf = '';
+let sentShutdown = false; // shutdown 已发出：此后 sidecar 自然退出属预期，不再 fail-fast
 const fail = (msg) => { console.error('[sidecar-probe] FAIL:', msg); child.kill(); process.exit(1); };
 const timer = setTimeout(() => fail(`总超时 ${timeoutSec}s`), timeoutSec * 1000);
+// BUG-A-020：sidecar 早死后写 stdin 会 EPIPE —— 挂 error 监听防崩溃栈，实际失败由 exit fail-fast 兜底
+child.stdin.on('error', (e) => console.error('[sidecar-probe] stdin write error:', e.message));
 
 child.stdout.on('data', (d) => {
   buf += d.toString();
@@ -42,7 +45,7 @@ child.stdout.on('data', (d) => {
       const url = msg.result.webUrl;
       const ms = Date.now() - t0;
       console.log(`[sidecar-probe] boot.start ok in ${ms}ms → ${url}`);
-      http.get(url + '/', { timeout: 10000 }, (r) => {
+      const probe = http.get(url + '/', { timeout: 10000 }, (r) => {
         let body = '';
         r.on('data', (c) => { body += c; });
         r.on('end', () => {
@@ -57,10 +60,13 @@ child.stdout.on('data', (d) => {
           console.log(`[sidecar-probe] ui-html=${ui} chat-marker=${chatish}`);
           if (body.length > 400) console.log('[sidecar-probe] html head: ' + body.slice(0, 400).replace(/\s+/g, ' '));
           if (!ui || !chatish) { fail('首页未呈现对话界面（非完整 HTML 或缺聊天标记）'); return; }
+          sentShutdown = true; // shutdown 已发出：此后 sidecar 自然退出属预期
           child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\n');
           setTimeout(() => { console.log(`[sidecar-probe] PASS (${ms}ms)`); child.kill(); process.exit(0); }, 9000);
         });
       }).on('error', (e) => fail('probe error: ' + e.message));
+      // BUG-A-020：timeout 选项仅 socket 级 —— 监听 'timeout' 并中止，防止对端挂起时探活永不回调
+      probe.on('timeout', () => probe.destroy(new Error('probe socket timeout 10s')));
     } else if (msg.id === 1 && msg.error) {
       fail('boot.start error: ' + JSON.stringify(msg.error));
     }
@@ -71,4 +77,8 @@ setTimeout(() => {
   console.log('[sidecar-probe] sending boot.start (DSH_HOME=' + tmpHome + ')');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'boot.start', params: {} }) + '\n');
 }, 500);
-child.on('exit', (code) => console.log('[sidecar-probe] sidecar exited code=' + code));
+// BUG-A-020：sidecar 早死（shutdown 发出前退出）→ 干净 FAIL 收场，而非无防护地写 stdin
+child.on('exit', (code) => {
+  console.log('[sidecar-probe] sidecar exited code=' + code);
+  if (!sentShutdown) fail(`sidecar 提前退出（code=${code}）`);
+});

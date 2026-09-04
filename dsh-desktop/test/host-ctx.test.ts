@@ -74,7 +74,7 @@ test('缺省 showMessageBox 无头兜底：应答取 cancelId（＝保守的取�
   assert.equal(r2.response, 1, '无 cancelId 时按最后一键（关闭语义）应答');
 });
 
-test('initHostCtx 注入全量生效：宿主实现逐项接管', () => {
+test('initHostCtx 注入全量生效：宿主实现逐项接管', async () => {
   resetHostCtx();
   const seen: string[] = [];
   initHostCtx({
@@ -91,8 +91,8 @@ test('initHostCtx 注入全量生效：宿主实现逐项接管', () => {
     removeAppMenu: () => seen.push('menu'),
     showMessageBox: (o) => { seen.push(`box:${o.title}`); return Promise.resolve({ response: 0 }); },
     shortcuts: {
-      readLink: (p) => { seen.push(`read:${p}`); return { target: 't.exe' }; },
-      writeLink: (p) => seen.push(`write:${p}`),
+      readLink: async (p) => { seen.push(`read:${p}`); return { target: 't.exe' }; },
+      writeLink: async (p) => { seen.push(`write:${p}`); },
     },
   });
   const host = hostCtx();
@@ -107,8 +107,8 @@ test('initHostCtx 注入全量生效：宿主实现逐项接管', () => {
   assert.equal(host.getPath('appData'), 'P:appData');
   host.setPath?.('userData', 'U');
   host.removeAppMenu?.();
-  assert.equal(host.shortcuts?.readLink('a.lnk').target, 't.exe');
-  host.shortcuts?.writeLink('a.lnk', 'create', { target: 't.exe' });
+  assert.equal((await host.shortcuts?.readLink('a.lnk'))?.target, 't.exe');
+  await host.shortcuts?.writeLink('a.lnk', 'create', { target: 't.exe' });
   assert.deepEqual(seen, [
     'log:tag:msg', 'exit:3', 'quit', 'notify:N', 'clip:C', 'set:userData:U',
     'menu', 'read:a.lnk', 'write:a.lnk',

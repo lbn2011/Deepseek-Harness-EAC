@@ -116,6 +116,14 @@ async function fetchPackToTemp(target: string, sha256?: string): Promise<string>
   return target;
 }
 
+// 清理 fetchPackToTemp 为 URL 下载创建的临时包文件。keepForQueue=true 表示
+// EXIT_LOCK 排队路径：zipPath 已写入 pending.json，无锁窗口的 resume 还要用，
+// 必须保留；其余成功/失败路径都删除（避免每次泄漏数十 MB 临时文件）。
+function rmTempPack(tmp: string, target: string, keepForQueue: boolean): void {
+  if (keepForQueue || !/^https?:\/\//i.test(target)) return;
+  try { fs.rmSync(tmp, { force: true }); } catch { /* 清理失败忽略 */ }
+}
+
 function printJson(v: unknown): void {
   process.stdout.write(JSON.stringify(v, null, 2) + '\n');
 }
@@ -162,9 +170,13 @@ async function main(): Promise<number> {
         const target = args[1];
         if (!target) { printJson({ ok: false, error: '用法：feature-pack-cli inspect <zip|url>' }); return EXIT_USAGE; }
         const tmp = await fetchPackToTemp(target);
-        const { manifest, zip } = await parsePackZip(tmp);
-        printJson({ ok: true, manifest, payloadPresets: zip.files.filter((f: { path: string }) => f.path.startsWith('payload/presets/')).length > 0, payloadSkills: zip.files.filter((f: { path: string }) => f.path.startsWith('payload/skills/')).length > 0 });
-        return EXIT_OK;
+        try {
+          const { manifest, zip } = await parsePackZip(tmp);
+          printJson({ ok: true, manifest, payloadPresets: zip.files.filter((f: { path: string }) => f.path.startsWith('payload/presets/')).length > 0, payloadSkills: zip.files.filter((f: { path: string }) => f.path.startsWith('payload/skills/')).length > 0 });
+          return EXIT_OK;
+        } finally {
+          rmTempPack(tmp, target, false);
+        }
       }
       case 'list': {
         printJson({ ok: true, kernel: resolveKernelVersion(), packs: listPacks() });
@@ -175,28 +187,40 @@ async function main(): Promise<number> {
         if (!target) { printJson({ ok: false, error: '用法：feature-pack-cli install <zip|url> [--force] [--op <opRef>] [--sha256 <hex>]' }); return EXIT_USAGE; }
         console.error('[feature-pack] 下载/定位包: ' + target);
         const tmp = await fetchPackToTemp(target, flag('sha256'));
-        const r = await installPack({ zipPath: tmp, force: hasFlag('force'), opRef: flag('op') ?? null, source: /^https?:\/\//i.test(target) ? 'url' : 'local-file' });
-        if (!r.ok && r.code === EXIT_LOCK) {
-          const opRef = flag('op');
-          enqueuePending({ action: 'install', zipPath: tmp, force: hasFlag('force'), ...(opRef ? { opRef } : {}) });
-          console.error('[feature-pack] 文件被占用（Windows 文件锁）：任务已排队，等待服务重启后的无锁窗口自动完成');
+        let keepTmpForQueue = false;
+        try {
+          const r = await installPack({ zipPath: tmp, force: hasFlag('force'), opRef: flag('op') ?? null, source: /^https?:\/\//i.test(target) ? 'url' : 'local-file' });
+          if (!r.ok && r.code === EXIT_LOCK) {
+            keepTmpForQueue = true;
+            const opRef = flag('op');
+            enqueuePending({ action: 'install', zipPath: tmp, force: hasFlag('force'), ...(opRef ? { opRef } : {}) });
+            console.error('[feature-pack] 文件被占用（Windows 文件锁）：任务已排队，等待服务重启后的无锁窗口自动完成');
+          }
+          printJson(r);
+          return r.ok ? EXIT_OK : (r.code ?? EXIT_FAIL);
+        } finally {
+          rmTempPack(tmp, target, keepTmpForQueue);
         }
-        printJson(r);
-        return r.ok ? EXIT_OK : (r.code ?? EXIT_FAIL);
       }
       case 'update': {
         const id = args[1];
         const target = args[2];
         if (!id || !target) { printJson({ ok: false, error: '用法：feature-pack-cli update <id> <zip|url> [--force] [--op <opRef>] [--sha256 <hex>]' }); return EXIT_USAGE; }
         const tmp = await fetchPackToTemp(target, flag('sha256'));
-        const r = await updatePack(id, { zipPath: tmp, force: hasFlag('force'), opRef: flag('op') ?? null });
-        if (!r.ok && r.code === EXIT_LOCK) {
-          const opRef = flag('op');
-          enqueuePending({ action: 'update', id, zipPath: tmp, force: hasFlag('force'), ...(opRef ? { opRef } : {}) });
-          console.error('[feature-pack] 文件被占用（Windows 文件锁）：任务已排队，等待服务重启后的无锁窗口自动完成');
+        let keepTmpForQueue = false;
+        try {
+          const r = await updatePack(id, { zipPath: tmp, force: hasFlag('force'), opRef: flag('op') ?? null });
+          if (!r.ok && r.code === EXIT_LOCK) {
+            keepTmpForQueue = true;
+            const opRef = flag('op');
+            enqueuePending({ action: 'update', id, zipPath: tmp, force: hasFlag('force'), ...(opRef ? { opRef } : {}) });
+            console.error('[feature-pack] 文件被占用（Windows 文件锁）：任务已排队，等待服务重启后的无锁窗口自动完成');
+          }
+          printJson(r);
+          return r.ok ? EXIT_OK : (r.code ?? EXIT_FAIL);
+        } finally {
+          rmTempPack(tmp, target, keepTmpForQueue);
         }
-        printJson(r);
-        return r.ok ? EXIT_OK : (r.code ?? EXIT_FAIL);
       }
       case 'uninstall': {
         const id = args[1];

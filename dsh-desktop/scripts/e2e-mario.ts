@@ -128,6 +128,7 @@ async function main(): Promise<void> {
     stdio: 'ignore', windowsHide: true,
   });
   console.log(`[mario] app pid=${child.pid}`);
+  activeChild = child;
   const readWebLog = (): string => {
     try {
       return fs.readFileSync(path.join(userDataDir, 'logs', 'dsh-web.log'), 'utf8');
@@ -250,18 +251,25 @@ function finish(code: number, root: string, child: ChildProcess): void {
     } catch { /* 已退出 */ }
   }
   if (results.every((r) => r.ok)) {
-    setTimeout(() => {
-      try {
-        fs.rmSync(root, { recursive: true, force: true });
-      } catch { /* 清理失败保留现场 */ }
-    }, 500);
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch { /* 清理失败保留现场 */ }
   } else {
     console.log(`[mario] 失败现场保留于 ${root}`);
   }
   process.exit(code);
 }
 
+// 模块级现场记录：main() 异常逃逸时 catch 分支据此杀被测 exe 进程树。
+let activeChild: ChildProcess | null = null;
+
 main().catch((err) => {
   console.error('[mario] 异常: ' + ((err as Error)?.stack || err));
+  // 异常路径最小清理（对齐 finish()）：杀被测 exe 进程树；失败现场（root）保留。
+  if (activeChild && activeChild.exitCode === null) {
+    try {
+      spawn('taskkill', ['/pid', String(activeChild.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } catch { /* 已退出 */ }
+  }
   process.exit(1);
 });

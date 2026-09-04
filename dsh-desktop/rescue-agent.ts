@@ -701,6 +701,8 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
       }, (res) => {
         let data = '';
         res.setEncoding('utf8');
+        // 响应流中途出错（headers 已收）只有此监听能接住，否则成未捕获异常。
+        res.on('error', reject);
         res.on('data', (c) => {
           data += c;
           if (data.length > DEFAULT_OPTS.AI_RESPONSE_MAX) {

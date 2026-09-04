@@ -511,8 +511,15 @@ impl Sidecar {
         let mut w = self.writer.lock().await;
         let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
         line.push('\n');
-        w.write_all(line.as_bytes()).await.map_err(|e| format!("write rpc: {}", e))?;
-        w.flush().await.map_err(|e| format!("flush rpc: {}", e))?;
+        // 写失败必须回滚 pending 表，否则该 id 的应答通道永久残留（BUG-B-006）。
+        if let Err(e) = w.write_all(line.as_bytes()).await {
+            self.pending.lock().await.remove(&id);
+            return Err(format!("write rpc: {}", e));
+        }
+        if let Err(e) = w.flush().await {
+            self.pending.lock().await.remove(&id);
+            return Err(format!("flush rpc: {}", e));
+        }
         drop(w);
         match tokio::time::timeout(std::time::Duration::from_secs(180), rx).await {
             Ok(Ok(res)) => res,
@@ -779,20 +786,13 @@ async fn handle_shell_method(
             let Some(sidecar) = sidecar else {
                 return Ok(Some(reply(serde_json::json!({"ok":false,"error":"sidecar not running"}))));
             };
-            let authorized = match sidecar.call("files.authorize-open", params.clone()).await {
+            // sidecar 的 files.open 自带授权+打开（含 skills 根/危险扩展名围栏），
+            // 不存在 files.authorize-open 方法，壳层直接转发原参数（{path}）。
+            let result = match sidecar.call("files.open", params.clone()).await {
                 Ok(value) => value,
-                Err(error) => return Ok(Some(reply(serde_json::json!({"ok":false,"error":error})))),
-            };
-            if authorized.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-                return Ok(Some(reply(authorized)));
-            }
-            let Some(target) = authorized.get("path").and_then(|v| v.as_str()) else {
-                return Ok(Some(reply(serde_json::json!({"ok":false,"error":"authorized path missing"}))));
-            };
-            Ok(Some(reply(match open_native_target(target).await {
-                Ok(()) => serde_json::json!({"ok":true}),
                 Err(error) => serde_json::json!({"ok":false,"error":error}),
-            })))
+            };
+            Ok(Some(reply(result)))
         }
         "log.renderer-heartbeat" => Ok(None), // P3 恢复状态机消费；P2 吞掉不转发
         "log.page-error" => {
@@ -1292,9 +1292,48 @@ fn navigate_main(app: &tauri::AppHandle, href: String) {
     });
 }
 
-/// back 查询参数编码（与 /died 的 log 参数同规则；页面侧 URLSearchParams 解码）。
+/// 查询参数值 percent-encoding：仅保留 unreserved 字符（字母数字与 -_.~），
+/// 其余（含 & ? # % / \\ 空格）一律 %XX，避免破坏查询串或导致 Url::parse 失败。
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// 与 percent_encode 配对的查询参数解码（%XX 还原；非法序列按原样保留）。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+        {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+            if let Ok(v) = u8::from_str_radix(hex, 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// back 查询参数编码（页面侧 URLSearchParams 解码，兼容完整 percent-encoding）。
 fn encode_back(url: &str) -> String {
-    url.replace('\\', "%5C").replace(':', "%3A").replace('/', "%2F").replace(' ', "+")
+    percent_encode(url)
 }
 
 /// 更新进度页（client-update.show / agent 更新共用；进度经 _onNotify 渲染）。
@@ -1450,7 +1489,7 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         if let Some(q) = path.split_once('?') {
             for kv in q.1.split('&') {
                 if let Some((k, v)) = kv.split_once('=') {
-                    let v = v.replace("%3A", ":").replace("%5C", "\\").replace("%2F", "/").replace('+', " ");
+                    let v = percent_decode(v);
                     if k == "v" {
                         version = v;
                     } else if k == "kind" {
@@ -1471,7 +1510,7 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         if let Some(q) = path.split_once('?') {
             for kv in q.1.split('&') {
                 if let Some((k, v)) = kv.split_once('=') {
-                    let v = v.replace("%3A", ":").replace("%5C", "\\").replace("%2F", "/").replace('+', " ");
+                    let v = percent_decode(v);
                     if k == "code" {
                         code = v;
                     } else if k == "log" {
@@ -1610,8 +1649,8 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             let href = format!(
                 "http://127.0.0.1:{}/died?code={}&log={}",
                 WS_PORT,
-                code,
-                log.replace('\\', "%5C").replace(':', "%3A").replace('/', "%2F").replace(' ', "+")
+                percent_encode(&code),
+                percent_encode(&log)
             );
             let app2 = app.clone();
             let _ = app.run_on_main_thread(move || {
@@ -1824,7 +1863,7 @@ fn main() {
                                     }
                                     Err(e) => {
                                         eprintln!("[shell] boot.start failed: {}", e);
-                                        let msg = e.replace('"', "'").replace('\n', " ");
+                                        let msg = percent_encode(&e);
                                         let href = format!(
                                             "http://127.0.0.1:{}/died?code=boot&log={}",
                                             WS_PORT, msg
@@ -1851,7 +1890,7 @@ fn main() {
                             // 无任何诊断入口。这里与 boot.start 失败同样处理：
                             // 建主窗并导航到 /died 页（参数带失败原因），提示重装。
                             eprintln!("[shell] sidecar spawn failed: {}", e);
-                            let msg = e.to_string().replace('"', "'").replace('\n', " ");
+                            let msg = percent_encode(&e.to_string());
                             let app_died = app_handle.clone();
                             let app_died_inner = app_died.clone();
                             let _ = app_died.run_on_main_thread(move || {

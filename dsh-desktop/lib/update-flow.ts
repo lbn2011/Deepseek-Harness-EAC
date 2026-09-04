@@ -146,6 +146,17 @@ export async function runUpdateFlow(manual: boolean): Promise<void> {
     if (manual) await showBox({ type: 'info', title: '更新', message: '更新正在进行中，请稍候。', buttons: ['确定'] });
     return;
   }
+  // 防重入：入口（过 quitting 检查）即置位 —— 确认弹窗等待期间，托盘/定时器
+  // 的二次触发必须被上面的 busy 检查拦下，否则出现两条并行更新流。
+  state.updateBusy = true;
+  try {
+    await runUpdateFlowInner(manual);
+  } finally {
+    state.updateBusy = false;
+  }
+}
+
+async function runUpdateFlowInner(manual: boolean): Promise<void> {
   const ctx = updCtx();
   let latest: string;
   try {
@@ -196,7 +207,6 @@ export async function runUpdateFlow(manual: boolean): Promise<void> {
   }
   if (response === 2) return;
 
-  state.updateBusy = true;
   const progressWin = showUpdateWindow(latest);
   const progress = makeUpdateProgressPusher(progressWin);
   try {
@@ -233,7 +243,6 @@ export async function runUpdateFlow(manual: boolean): Promise<void> {
       buttons: ['确定'],
     });
   } finally {
-    state.updateBusy = false;
     progressWin?.close();
   }
 }
@@ -337,7 +346,11 @@ function clientUpdateOpts(newVersion: string): clientUpdater.ApplyUpdateOpts {
   return {
     userDataDir: state.userDataDir,
     dshHome: state.dshHome,
-    installDir: path.dirname(process.execPath),
+    // sidecar 宿主下 process.execPath 是 node 二进制而非壳 exe；壳目录经
+    // DSH_SHELL_EXE 注入（与 tauri-shell/sidecar/server.ts getExecDir 同源）。
+    installDir: process.env.DSH_SHELL_EXE
+      ? path.dirname(process.env.DSH_SHELL_EXE)
+      : path.dirname(process.execPath),
     profileDir: path.join(state.dshHome, 'profiles', desktopProfile()),
     currentVersion: hostCtx().appVersion(),
     newVersion,
@@ -361,6 +374,21 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
   if (state.quitting) return;
   if (state.clientUpdateBusy) {
     if (manual) await showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
+    return;
+  }
+  // 防重入：同 runUpdateFlow —— 入口即置位，弹窗等待期间二次触发被拦下。
+  state.clientUpdateBusy = true;
+  try {
+    await runClientUpdateFlowInner(manual);
+  } finally {
+    state.clientUpdateBusy = false;
+  }
+}
+
+async function runClientUpdateFlowInner(manual: boolean): Promise<void> {
+  const policy = clientUpdatePlatformPolicy(process.platform);
+  if (!policy.enabled) {
+    if (manual) await showBox({ type: 'info', title: '客户端更新', message: policy.message ?? '', buttons: ['确定'] });
     return;
   }
   const ctx = updCtx();
@@ -425,7 +453,6 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
     return;
   }
 
-  state.clientUpdateBusy = true;
   const progressWin = showUpdateWindow(release.version, 'client');
   const progress = makeUpdateProgressPusher(progressWin);
   try {
@@ -501,7 +528,6 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
       buttons: ['确定'],
     });
   } finally {
-    state.clientUpdateBusy = false;
     progressWin?.close();
   }
 }

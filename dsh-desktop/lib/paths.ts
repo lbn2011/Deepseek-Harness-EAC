@@ -89,6 +89,13 @@ export function isUnderFileRoots(p: string): boolean {
   });
 }
 
+/** 强制失效 fileRoots 缓存后重新枚举（围栏未命中时的复查入口：新会话的
+ *  cwd 可能尚未进入 5 分钟缓存窗口，见 preview.ts 的路径围栏用法）。 */
+export function refreshFileRoots(): string[] {
+  fileRootsCache.at = 0;
+  return fileRoots();
+}
+
 // ---------------------------------------------------------------------------
 // 桌面专属 profile（与原生 CLI 彻底共存）：
 //

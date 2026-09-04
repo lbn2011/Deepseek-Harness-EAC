@@ -237,6 +237,7 @@ async function main(): Promise<void> {
     detached: false, stdio: 'ignore', windowsHide: true,
   });
   const appPid = child.pid;
+  activeAppPid = appPid;
   console.log(`[e2e:${TAG}] 应用已启动 pid=${appPid} exe=${runExe}`);
 
   const userDataDir = isPortableExe
@@ -474,11 +475,9 @@ async function main(): Promise<void> {
   // 清理临时目录（失败时保留现场供排查）
   const failed = results.some((r) => !r.ok);
   if (!failed) {
-    setTimeout(() => {
-      try {
-        fs.rmSync(root, { recursive: true, force: true });
-      } catch { /* 清理失败 */ }
-    }, 100);
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch { /* 清理失败 */ }
   } else {
     console.log(`[e2e:${TAG}] 失败现场保留于 ${root}`);
   }
@@ -491,7 +490,15 @@ function finish(code: number): void {
   process.exit(code);
 }
 
+// 模块级现场记录：main() 异常逃逸时 catch 分支据此杀被测 exe 进程树。
+let activeAppPid: number | undefined;
+
 main().catch((err) => {
   console.error('[e2e] 异常: ' + ((err as Error)?.stack || err));
+  if (activeAppPid && procAlive(activeAppPid)) {
+    try {
+      spawn('taskkill', ['/pid', String(activeAppPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } catch { /* 已退出 */ }
+  }
   process.exit(1);
 });

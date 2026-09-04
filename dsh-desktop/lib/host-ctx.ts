@@ -74,12 +74,13 @@ export interface HostShortcutLink {
   appUserModelId?: string;
 }
 
-/** Windows .lnk 快捷方式读写能力（宿主不支持则整体缺省 → 调用方跳过维护）。 */
+/** Windows .lnk 快捷方式读写能力（宿主不支持则整体缺省 → 调用方跳过维护）。
+ *  读写均为异步：sidecar 经 PowerShell 子进程实现，同步等待会阻塞其事件循环。 */
 export interface HostShortcuts {
   /** 读 .lnk；损坏/失败抛错（调用方自行捕获）。 */
-  readLink(p: string): HostShortcutLink;
+  readLink(p: string): Promise<HostShortcutLink>;
   /** 写 .lnk；失败抛错（调用方自行捕获）。 */
-  writeLink(p: string, operation: 'create' | 'replace', opts: HostShortcutWriteOpts): void;
+  writeLink(p: string, operation: 'create' | 'replace', opts: HostShortcutWriteOpts): Promise<void>;
 }
 
 /**

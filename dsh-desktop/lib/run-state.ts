@@ -31,8 +31,10 @@ export function runStatePath(): string {
 /** 写运行状态（pid/exe/版本/启动时间；cleanExit 默认 false）。 */
 export function writeRunState(extra: Record<string, unknown> = {}): void {
   try {
+    const file = runStatePath();
+    const tmp = file + '.tmp-' + process.pid;
     fs.writeFileSync(
-      runStatePath(),
+      tmp,
       JSON.stringify({
         pid: process.pid,
         exe: process.execPath,
@@ -42,6 +44,7 @@ export function writeRunState(extra: Record<string, unknown> = {}): void {
         ...extra,
       }),
     );
+    fs.renameSync(tmp, file); // 原子替换
   } catch (err) {
     log('watchdog', '写运行状态失败: ' + String((err as Error).message));
   }
@@ -59,7 +62,9 @@ export function markCleanExit(): void {
     }
     prev.cleanExit = true;
     prev.endedAt = new Date().toISOString();
-    fs.writeFileSync(p, JSON.stringify(prev));
+    const tmp = p + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(prev));
+    fs.renameSync(tmp, p); // 原子替换
   } catch (err) {
     log('watchdog', '写退出标记失败: ' + String((err as Error).message));
   }

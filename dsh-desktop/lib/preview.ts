@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import * as http from 'node:http';
 import { state } from './state.js';
 import { log } from './log.js';
+import { isUnderFileRoots, refreshFileRoots } from './paths.js';
 
 /** 扩展名 → MIME 映射（预览所需的最小集合）。 */
 const MIME: Record<string, string> = {
@@ -60,6 +61,13 @@ export function startPreviewStaticServer(): void {
       res.end();
       return;
     }
+    // BUG-D-006：Host 头必须为回环主机（带任意端口）——防 DNS rebinding：
+    // 恶意域名重绑定到 127.0.0.1 后浏览器发出的请求 Host 是该域名，在此 403。
+    if (!/^(\[::1\]|localhost|127\.0\.0\.1)(:\d+)?$/i.test(String(req.headers.host ?? ''))) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
       res.end();
@@ -78,6 +86,20 @@ export function startPreviewStaticServer(): void {
       res.writeHead(400);
       res.end();
       return;
+    }
+    // BUG-D-006：路径围栏——预览面只服务会话 cwd 下的项目文件（消费方
+    // dsh-client-file-changes 的预览目标只有文件变更条目与「全部文件」
+    // 目录树，均 rooted at 会话 cwd，与 dsh:file-revert/file-open 同一
+    // isUnderFileRoots 围栏语义），超出 roots 的绝对路径一律 403。
+    // fileRoots 有 5 分钟缓存，未命中时强制刷新重查一次（新会话的 cwd
+    // 可能尚未入缓存）。
+    if (!isUnderFileRoots(p)) {
+      refreshFileRoots();
+      if (!isUnderFileRoots(p)) {
+        res.writeHead(403);
+        res.end();
+        return;
+      }
     }
     try {
       const st = fs.statSync(p);

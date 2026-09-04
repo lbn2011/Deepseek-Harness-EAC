@@ -160,7 +160,7 @@ export async function startServer(
   // 跨实例并发 dsh web 检测（7f7fa05，fix #22）：他人活锁时拒绝启动——
   // 两个 web 进程并发写同一 DSH_HOME 会损坏会话日志。死锁自动清理、
   // 自身锁放行（重入/受限端口重启交接），详见 lib/server-lock.ts。
-  if (isAnotherDshWebRunning()) {
+  const refuseAnotherInstance = (): never => {
     const lockPath = dshWebLockPath();
     log('dsh', '检测到另一个 dsh web 进程正在运行（锁文件：' + lockPath + '）');
     throw new Error(
@@ -168,8 +168,13 @@ export async function startServer(
         lockPath +
         '）。请先关闭其他 dsh web 实例后重试；若确认没有其他实例在运行，可手动删除该锁文件。',
     );
-  }
+  };
+  if (isAnotherDshWebRunning()) refuseAnotherInstance();
   const lockToken = createDshWebLock(); // exit handler 凭 token 代次释放
+  // BUG-D-001：锁创建已是 'wx' 原子排他写，但探测与创建之间仍可能被并发
+  // 实例插队（EEXIST 时 createDshWebLock 不持锁返回）——复查一次并复用
+  // 上方「另一实例」拒绝路径，闭合 check-then-act 竞态窗口。
+  if (isAnotherDshWebRunning()) refuseAnotherInstance();
   // 稳定端口（stable-port.js）：复用 settings.webPort，避免每次 --port 0
   // 换 origin 导致 localStorage 偏好丢失；同时避开 Chromium 受限端口。
   const webPort = await chooseStableWebPort(stablePortCtx());

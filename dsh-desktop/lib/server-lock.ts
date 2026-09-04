@@ -53,12 +53,54 @@ export function isAnotherDshWebRunning(): boolean {
   }
 }
 
-/** 创建锁文件（写入本进程 PID），返回本次持锁 token（exit handler 凭它释放）。 */
+/**
+ * 创建锁文件（写入本进程 PID），返回本次持锁 token（exit handler 凭它释放）。
+ *
+ * BUG-D-001：'wx' 原子排他创建闭合 check-then-act 竞态（探测与写入之间的
+ * TOCTOU 窗口内另一实例可插队写锁）。EEXIST 视为锁已被抢：自己的锁（重入/
+ * 交接竞态下旧 proc exit handler 未及释放）覆写放行；他人死锁清理残留后
+ * 重试一次；他人活锁则不持锁返回（lockHeld 保持 false，removeDshWebLock
+ * 成空操作），由调用方复查 isAnotherDshWebRunning 走既有「发现另一实例」
+ * 拒绝路径。
+ */
 export function createDshWebLock(): number {
+  const lockPath = dshWebLockPath();
   try {
-    fs.writeFileSync(dshWebLockPath(), String(process.pid), 'utf8');
-    lockHeld = true;
-    lockToken += 1;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+        lockHeld = true;
+        lockToken += 1;
+        return lockToken;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err;
+        let pid = NaN;
+        try {
+          pid = parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
+        } catch {
+          continue; // 读侧竞态（他人刚好释放/清理）：重试原子创建
+        }
+        if (pid === process.pid) {
+          fs.writeFileSync(lockPath, String(process.pid), 'utf8');
+          lockHeld = true;
+          lockToken += 1;
+          return lockToken;
+        }
+        let alive = true;
+        try {
+          process.kill(pid, 0);
+        } catch {
+          alive = false;
+        }
+        if (isNaN(pid) || !alive) {
+          // 死锁/残缺锁：同 isAnotherDshWebRunning 的自愈语义，清理后重试一次。
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+        log('dsh', 'dsh web 锁已被其他进程持有（PID ' + pid + '，锁文件：' + lockPath + '）');
+        return lockToken;
+      }
+    }
   } catch (err) {
     log('dsh', '创建 dsh web 锁文件失败: ' + String((err as Error).message || err));
   }

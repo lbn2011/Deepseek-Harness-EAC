@@ -11,14 +11,17 @@ const http = require('node:http');
 const repo = path.resolve(__dirname);
 const tmpHome = path.join(repo, 'tmp-p2boot', 'shim-home');
 fs.mkdirSync(tmpHome, { recursive: true });
-const CDP_PORT = 9334;
+const CDP_PORT = 9336; // BUG-A-010：原 9334 与 ui-verify-smoke.js 冲突
 const EXE = process.env.DSH_SMOKE_EXE || path.join(repo, 'tauri-shell', 'target', 'release', 'dsh-eac-shell.exe');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const httpGetJson = (url) => new Promise((resolve, reject) => {
-  http.get(url, { timeout: 4000 }, (r) => {
+  const req = http.get(url, { timeout: 4000 }, (r) => {
     let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
-  }).on('error', reject);
+  });
+  // BUG-A-021：timeout 选项仅 socket 级 —— 监听 'timeout' 并中止，防止对端挂起时 Promise 永不 settle
+  req.on('timeout', () => req.destroy(new Error('timeout 4000ms')));
+  req.on('error', reject);
 });
 
 let failures = 0;
@@ -69,15 +72,29 @@ async function waitForTarget(matchFn, timeoutMs) {
   throw new Error('target not found in time');
 }
 
-async function listOrphans() {
-  return new Promise((resolve) => {
-    const p = spawn('powershell', ['-NoProfile', '-Command',
-      `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'tmp-p2boot' } | Select-Object -ExpandProperty ProcessId`],
-      { windowsHide: true });
-    let out = ''; p.stdout.on('data', (d) => (out += d));
-    p.on('exit', () => resolve(out.trim()));
-  });
+// BUG-A-010①：DSH_HOME 走 env 不进命令行，CommandLine 匹配恒空 —— 改为脚本
+// 自跟踪 spawn 树 PID（退出前快照 shell → sidecar → dsh web），退出后按 PID 校验。
+const childPids = (pid) => new Promise((resolve) => {
+  const p = spawn('powershell', ['-NoProfile', '-Command',
+    `Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" | Select-Object -ExpandProperty ProcessId`],
+    { windowsHide: true });
+  let out = ''; p.stdout.on('data', (d) => (out += d));
+  p.on('error', () => resolve([]));
+  p.on('exit', () => resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map(Number)));
+});
+async function snapshotTree(rootPid) {
+  const all = [rootPid];
+  for (const k of await childPids(rootPid)) all.push(...await snapshotTree(k));
+  return all;
 }
+const alivePids = (pids) => pids.length === 0 ? Promise.resolve('') : new Promise((resolve) => {
+  const p = spawn('powershell', ['-NoProfile', '-Command',
+    `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`],
+    { windowsHide: true });
+  let out = ''; p.stdout.on('data', (d) => (out += d));
+  p.on('error', () => resolve(''));
+  p.on('exit', () => resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).join(' ')));
+});
 
 (async () => {
   console.log('[verify-shim] launching release shell with DSH_HOME=' + tmpHome);
@@ -157,6 +174,8 @@ async function listOrphans() {
     }
 
     // 优雅退出：win.close → overlay → quit（与 gui-smoke 同路径）
+    // 退出前快照 spawn 树 PID（BUG-A-010① 自跟踪，供零孤儿校验）
+    const treePids = await snapshotTree(shell.pid);
     await c.evalJs('window.dshDesktop.windowControls.close()').catch(() => {});
     await sleep(1500);
     await c.evalJs(`document.querySelector('#dsh-exit-overlay [data-v=quit]').click(); 0`).catch(() => {});
@@ -169,7 +188,7 @@ async function listOrphans() {
     check('退出应用（进程收口）', exited, 'exitCode=' + shell.exitCode);
 
     await sleep(3500);
-    const orphans = await listOrphans();
+    const orphans = await alivePids(treePids);
     check('零孤儿进程', orphans === '', orphans || '(none)');
 
     c.close();

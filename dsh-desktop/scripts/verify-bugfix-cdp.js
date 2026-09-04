@@ -160,7 +160,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 1200));
       return !!document.querySelector('[data-slot="settings.section"]');
     })()`, 20000);
-    check('设置页已打开', opened === true || opened === 'no-button' ? !!opened : !!opened, String(opened));
+    check('设置页已打开', opened === true, String(opened));
 
     // 等待配套插件扫描生效
     await sleep(2500);

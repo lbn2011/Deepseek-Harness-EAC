@@ -191,7 +191,12 @@ test('核心配置围栏：安装/卸载/回滚全程不触碰 Core Profile（§
     writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'fence-ext', version: '1.0.0' }));
     assert.ok(installer.installSdkPlugin('fence-ext', { srcDir: src }).ok);
     assert.ok(installer.uninstallSdkPlugin('fence-ext').ok);
-    assert.ok(installer.rollbackSdkPlugin('fence-ext').ok || true); // 无回滚点属预期
+    // 无回滚点属预期：rollbackSdkPlugin 此时必须返回 ok:false + 明确原因
+    // （installer.ts:236-238），而不是静默成功。
+    const rb = installer.rollbackSdkPlugin('fence-ext');
+    assert.equal(rb.ok, false, '无回滚点时 rollbackSdkPlugin 应返回 ok:false，实际: ' + JSON.stringify(rb));
+    assert.ok(rb.error && rb.error.includes('无可用回滚点'),
+      '应说明无可用回滚点原因，实际: ' + (rb.error || '(空)'));
 
     // 断言：三份内容逐字节不变；node_modules 下无新增目录。
     assert.equal(snap('package.json'), '{"name":"core"}');

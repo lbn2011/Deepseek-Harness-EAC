@@ -136,7 +136,8 @@ if (logger && logger._testExports?.deepRedact) {
         ? logger._testExports._deepRedactInternal(bad, new WeakMap(), { onError: (e) => { gotWarn = e; } })
         : deepRedact(bad);
       assert.equal(out.good, 'ok', 'good key 必须保留不丢');
-      if (gotWarn) assert.ok(gotWarn.message.includes('boom'), `应当记录 boom 警告，实际：${gotWarn}`);
+      assert.ok(gotWarn, '异常 getter 必须产生告警（onError/console.error 至少其一被调用），实际无任何告警');
+      assert.ok(gotWarn.message && gotWarn.message.includes('boom'), `应当记录 boom 警告，实际：${gotWarn}`);
     } finally { console.error = origErr; }
   });
 

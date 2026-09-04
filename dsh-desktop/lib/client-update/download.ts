@@ -265,22 +265,42 @@ export async function downloadWithSourceSwitch(
   throw lastErr instanceof Error ? lastErr : new Error('下载失败');
 }
 
-/** 按序拼接分片文件到 dest（Gitee .part1/.part2 → 单文件），拼接后删分片。 */
+/**
+ * 按序拼接分片文件到 dest（Gitee .part1/.part2 → 单文件），拼接后删分片。
+ *
+ * BUG-E-001：写流 out 的 'error' 监听必须在 createWriteStream 之后立即挂接
+ * （原实现循环结束后才挂，循环期间磁盘满/目标不可写会以未捕获异常打挂主
+ * 进程）；每次 pipe/收尾都与 outError 竞速，写流任何时刻出错即 reject 整体
+ * 并销毁写流。分片删除推迟到合并成功之后，错误路径保留分片现场（此前先删
+ * 源再合并，出错即丢已下载数据）。
+ */
 export async function concatFiles(sources: string[], dest: string): Promise<void> {
   const out = fs.createWriteStream(dest);
-  for (const s of sources) {
-    await new Promise<void>((res, rej) => {
-      const rs = fs.createReadStream(s);
-      rs.on('error', rej);
-      rs.on('end', res);
-      rs.pipe(out, { end: false });
-    });
-    fs.rmSync(s, { force: true });
-  }
-  await new Promise<void>((res, rej) => {
+  const outError = new Promise<never>((_, rej) => {
     out.on('error', rej);
-    out.end(res);
   });
+  try {
+    for (const s of sources) {
+      const piped = new Promise<void>((res, rej) => {
+        const rs = fs.createReadStream(s);
+        rs.on('error', rej);
+        rs.on('end', res);
+        rs.pipe(out, { end: false });
+      });
+      await Promise.race([piped, outError]);
+    }
+    await Promise.race([new Promise<void>((res) => out.end(res)), outError]);
+  } catch (err) {
+    out.destroy();
+    throw err;
+  }
+  for (const s of sources) {
+    try {
+      fs.rmSync(s, { force: true });
+    } catch {
+      /* 分片清理失败不阻塞更新（dest 已合并完成） */
+    }
+  }
 }
 
 // --- SHA-256 内容校验（V4）--------------------------------------------------

@@ -404,7 +404,13 @@ export async function applyUpdate(
   fs.mkdirSync(staging, { recursive: true });
   const logPath = path.join(ctx.userDataDir, 'logs', 'update.log');
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+  let logStream: fs.WriteStream | null = fs.createWriteStream(logPath, { flags: 'a' });
+  // 写盘失败（磁盘满/权限）降级：吞掉 'error' 并停用日志流，避免无监听器的
+  // error 事件击穿主进程；后续写经 runNpm 的空值守卫跳过。
+  logStream.on('error', (err) => {
+    ctx.log('update', '更新日志写盘失败（降级为无日志）: ' + String((err as Error).message));
+    logStream = null;
+  });
 
   const chain = registryChain(await currentRegistry(ctx));
   const errors: string[] = [];
@@ -487,7 +493,7 @@ export async function applyUpdate(
       }
     }
   }
-  logStream.end();
+  logStream?.end();
   if (installErr) {
     fs.rmSync(staging, { recursive: true, force: true });
     throw new Error(installErr.message + '（已尝试镜像源：' + errors.join('；') + '；日志: ' + logPath + '）');

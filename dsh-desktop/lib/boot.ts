@@ -449,7 +449,7 @@ export async function boot(): Promise<void> {
         },
       });
       state.sessionWatcher.start();
-      maintainShortcuts();
+      void maintainShortcuts();
       warnTempRun();
       startBalanceLoop();
       offerPendingClientUpdate();

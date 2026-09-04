@@ -9,8 +9,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { state } from './state.js';
 import { log } from './log.js';
 import { hostCtx } from './host-ctx.js';
@@ -104,8 +104,31 @@ export interface ExternalDshResult {
   pids: number[];
 }
 
+// 解析 CIM 查询输出为外部 dsh 进程检测结果（JSON 损坏按「无外部进程」处理）。
+function parseExternalDsh(out: string, own: Set<number>): ExternalDshResult {
+  try {
+    const arr = out.trim() === '' ? [] : (JSON.parse(out) as unknown);
+    const list = Array.isArray(arr) ? arr : [arr];
+    const pids: number[] = [];
+    for (const it of list) {
+      const item = it as { ProcessId?: unknown; CommandLine?: unknown } | null;
+      const pid = Number(item && item.ProcessId);
+      const cmd = String((item && item.CommandLine) || '');
+      if (!Number.isFinite(pid) || own.has(pid)) continue;
+      if (!/dsh|deepseek-ai/i.test(cmd)) continue;
+      if (!/(\s|\/|\\)(web|plugin|run|tui)(\s|$)|bin\.(js|ts)/i.test(cmd)) continue;
+      pids.push(pid);
+    }
+    return { running: pids.length > 0, pids };
+  } catch {
+    return { running: false, pids: [] };
+  }
+}
+
 // 检测本机是否有其它 dsh 进程在跑（原生 CLI / 另一份安装）。Windows 下用
 // CIM 查 node 进程命令行；超时或失败按「无外部进程」处理（宁可漏报）。
+// 异步 execFile：巡检 tick 命中时主进程事件循环不被 PowerShell 查询（最长
+// 12s）冻结。
 export function detectExternalDsh(): Promise<ExternalDshResult> {
   return new Promise((resolve) => {
     if (!IS_WIN) {
@@ -114,32 +137,15 @@ export function detectExternalDsh(): Promise<ExternalDshResult> {
     }
     const own = new Set<number>([process.pid]);
     if (state.serverProc && state.serverProc.pid) own.add(state.serverProc.pid);
-    let out = '';
-    try {
-      out = execSync(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \'Name=\'\'node.exe\'\'\' | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"',
-        { encoding: 'utf8', windowsHide: true, timeout: 12000 },
-      );
-    } catch {
-      resolve({ running: false, pids: [] });
-      return;
-    }
-    try {
-      const arr = out.trim() === '' ? [] : (JSON.parse(out) as unknown);
-      const list = Array.isArray(arr) ? arr : [arr];
-      const pids: number[] = [];
-      for (const it of list) {
-        const item = it as { ProcessId?: unknown; CommandLine?: unknown } | null;
-        const pid = Number(item && item.ProcessId);
-        const cmd = String((item && item.CommandLine) || '');
-        if (!Number.isFinite(pid) || own.has(pid)) continue;
-        if (!/dsh|deepseek-ai/i.test(cmd)) continue;
-        if (!/(\s|\/|\\)(web|plugin|run|tui)(\s|$)|bin\.(js|ts)/i.test(cmd)) continue;
-        pids.push(pid);
-      }
-      resolve({ running: pids.length > 0, pids });
-    } catch {
-      resolve({ running: false, pids: [] });
-    }
+    promisify(execFile)(
+      'powershell',
+      [
+        '-NoProfile', '-Command',
+        "Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+      ],
+      { windowsHide: true, timeout: 12000 },
+    )
+      .then(({ stdout }) => resolve(parseExternalDsh(String(stdout), own)))
+      .catch(() => resolve({ running: false, pids: [] }));
   });
 }

@@ -112,7 +112,7 @@ function extractZip(zipPath, outDir) {
       `[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)`,
       `exit 0`,
     ].join('; ');
-    try { execSync(`powershell.exe -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\"')}"`, { stdio: 'pipe', timeout: 60000 }); }
+    try { execSync(`powershell.exe -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '""')}"`, { stdio: 'pipe', timeout: 60000 }); }
     catch (e) { throw new Error('Zip Extract failed: ' + (e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + e.message); }
     return;
   }

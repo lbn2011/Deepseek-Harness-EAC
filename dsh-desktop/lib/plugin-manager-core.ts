@@ -298,6 +298,9 @@ export function imagePasteSave(dataUrl: string, name: string): { ok: boolean; pa
   if (!m || !m[1] || !m[2]) return { ok: false, error: '不是合法的图片 data URL' };
   const mime = m[1].toLowerCase();
   if (!IMAGE_PASTE_EXT[mime]) return { ok: false, error: '不支持的图片类型: ' + mime };
+  // 先按 base64 串长估算解码体积（3/4），超限直接拒绝——超长串全量解码
+  // 本身就能占满内存，大小闸门必须在解码之前生效。
+  if (m[2].length * 3 / 4 > IMAGE_PASTE_MAX_BYTES) return { ok: false, error: '图片超过 15MB 上限' };
   const buf = Buffer.from(m[2], 'base64');
   if (buf.length === 0) return { ok: false, error: '图片内容为空' };
   if (buf.length > IMAGE_PASTE_MAX_BYTES) return { ok: false, error: '图片超过 15MB 上限' };

@@ -479,10 +479,22 @@ export async function applyBuiltinPluginUpdate(ctx: PluginUpdCtx, source: Plugin
   copyTree(installed, merged);
   // 上游 bump 依赖时一并带上（仅顶层直依赖，绝不删除旧文件；主包已合并跳过）。
   const stagedNms = path.join(staging, 'node_modules');
+  const relMain = path.relative(stagedNms, installed);
   if (fs.existsSync(stagedNms)) {
     for (const e of fs.readdirSync(stagedNms, { withFileTypes: true })) {
-      if (!e.isDirectory() || e.name === path.basename(installed)) continue;
-      copyTree(path.join(stagedNms, e.name), path.join(merged, 'node_modules', e.name));
+      if (!e.isDirectory()) continue;
+      // scoped 主包占两级目录（@scope/name）：进入其所属 scope 目录时只剔除
+      // 主包自身，同 scope 其余包照常合并，避免整 scope 误伤。
+      if (e.name === relMain) continue;
+      const src = path.join(stagedNms, e.name);
+      if (relMain.startsWith(e.name + path.sep)) {
+        for (const se of fs.readdirSync(src, { withFileTypes: true })) {
+          if (!se.isDirectory() || se.name === path.basename(installed)) continue;
+          copyTree(path.join(src, se.name), path.join(merged, 'node_modules', e.name, se.name));
+        }
+        continue;
+      }
+      copyTree(src, path.join(merged, 'node_modules', e.name));
     }
   }
   const vNew = versionOfDir(merged);
