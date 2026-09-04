@@ -309,3 +309,27 @@ export function imagePasteSave(dataUrl: string, name: string): { ok: boolean; pa
   fs.writeFileSync(file, buf);
   return { ok: true, path: file, size: buf.length };
 }
+
+// 拖入文件保存（dsh-file-drop-eac 插件）：任意文件（zip/二进制/超大文本等）的
+// data URL → 临时目录，返回真实磁盘路径供 agent 按路径读取（HTML5 拖拽在页面
+// 拿不到磁盘路径，由 sidecar 落盘后回传）。上限 FILE_DROP_MAX_BYTES。
+// BUG-G-002：统一 lib 重构时本实现被误删（分叉点 lib/desktop/plugin-ops.ts:252
+// 同款），sidecar 处理器与 bridge.ts 调用方失去落点，按原语义恢复。
+export const FILE_DROP_MAX_BYTES = 64 * 1024 * 1024;
+
+export function fileDropSave(dataUrl: string, name: string): { ok: boolean; error?: string; path?: string; size?: number } {
+  const m = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m || !m[2]) return { ok: false, error: '不是合法的 data URL' };
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length === 0) return { ok: false, error: '文件内容为空' };
+  if (buf.length > FILE_DROP_MAX_BYTES) return { ok: false, error: '文件超过 64MB 上限' };
+  const dir = path.join(os.tmpdir(), 'dsh-file-drop');
+  fs.mkdirSync(dir, { recursive: true });
+  const inert = String(name || '拖入文件').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(0, 40) || '拖入文件';
+  const dot = inert.lastIndexOf('.');
+  const base = dot > 1 ? inert.slice(0, dot) : inert;
+  const ext = dot > 1 ? inert.slice(dot).toLowerCase().slice(0, 12) : '';
+  const file = path.join(dir, base + '-' + Date.now() + (ext || '.bin'));
+  fs.writeFileSync(file, buf);
+  return { ok: true, path: file, size: buf.length };
+}

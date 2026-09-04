@@ -103,10 +103,54 @@ export function stablePortCtx(): StablePortCtx {
 }
 
 /** startServer 参数：受限端口重试次数 + 额外 overlay patch 文件。 */
+// BUG-H-002：凭据版式自愈（移植自上游 boot-server healCredentialsVersion，
+// 25a8ccc+5d89422+12a1652 最终形态）。统一 lib 重构删除 lib/desktop/
+// boot-server.ts 时该自愈未移植——内核 credentials-local 只认
+// version:"1" + refs:/records: 版式，两种历史形态会被拒启（每次启动必死，
+// 停在「正在启动服务」→ /died 页）：
+//   a) 旧版把顶层 version 写成 YAML 数字 1 或带引号 "1"（读取严格匹配）；
+//   b) rc.2 时代的扁平文件（顶层直接放标量凭据，"pre-release flat layout"）。
+// 这里在拉起内核前做文本级自愈：a) version 行规整为 "1"；b) 扁平文件的
+// 标量顶层条目收进 refs:、records: 块原样保留在根（语义对齐内核
+// renderFlatLayoutMigration，且绝不触碰任何密钥值）；形态看不懂就不动，
+// 交内核报错路径展示。失败不阻塞启动。
+function healCredentialsVersion(): void {
+  try {
+    const home = state.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+    const file = path.join(home, '.credentials.yaml');
+    if (!fs.existsSync(file)) return;
+    const text = fs.readFileSync(file, 'utf8');
+    let fixed = text.replace(/^([ \t]*)version:[ \t]*(?:1|['"]1['"])[ \t]*$/m, '$1version: "1"');
+    if (!/^([ \t]*)version:[ \t]*\S/m.test(fixed)) {
+      const scalar: string[] = [];
+      const rest: string[] = [];
+      let inRecords = false;
+      let recognizable = true;
+      for (const line of fixed.split('\n')) {
+        if (/^records:[ \t]*$/.test(line)) { inRecords = true; rest.push(line); continue; }
+        if (inRecords) { rest.push(line); continue; }
+        if (/^[A-Za-z_][A-Za-z0-9_-]*:[ \t]*\S[ \t]*$/.test(line)) { scalar.push(line); continue; }
+        if (line.trim() === '') continue;
+        recognizable = false;
+        break;
+      }
+      if (recognizable && scalar.length > 0) {
+        fixed = 'version: "1"\nrefs:\n' + scalar.map((l) => '  ' + l).join('\n') + '\n' + rest.join('\n').replace(/\n*$/, '\n');
+      }
+    }
+    if (fixed !== text) {
+      fs.writeFileSync(file, fixed);
+      log('dsh', '已自愈 .credentials.yaml 版式（credentials-local 要求 version: "1" + refs:/records:）');
+    }
+  } catch { /* 自愈失败交由内核报错路径展示 */ }
+}
+
 export async function startServer(
   unsafePortRetries = 4,
   overlays: string[] = [],
 ): Promise<string> {
+  // BUG-H-002：拉起内核前先做凭据版式自愈（失败不阻塞，交内核报错路径）。
+  healCredentialsVersion();
   // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
   if (state.serverProc && !state.serverProc.killed && !state.quitting) {
     log('dsh', 'startServer 重入：先终结旧进程再启动');

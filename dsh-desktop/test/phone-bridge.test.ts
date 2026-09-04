@@ -122,25 +122,35 @@ test('phone bridge: 桌面批准 → 状态 approved + 下发 cookie + 白名单
     assert.equal(poll.body.state, 'approved')
     const rawCookie = poll.headers['set-cookie']
     const setCookie = Array.isArray(rawCookie) ? rawCookie.join('; ') : (rawCookie ?? '')
-    assert.match(setCookie, /dsh_mobile=1/)
+    // BUG-B-010 修复后：cookie 是本次配对签发的随机会话串，不得为静态常量
+    assert.match(setCookie, /dsh_mobile=[A-Za-z0-9_-]{20,}/)
+    assert.doesNotMatch(setCookie, /dsh_mobile=1;/)
     assert.match(setCookie, /HttpOnly/)
     assert.match(setCookie, /SameSite=Strict/)
+    const issuedCookie = (setCookie.match(/dsh_mobile=[^;]+/) || [''])[0]
+    assert.ok(issuedCookie, '应从 Set-Cookie 提取会话 cookie')
+
+    // 伪造静态 cookie（BUG-B-010 的攻击面）→ 401
+    const forged = await request(base + '/api/rpc', { method: 'POST', body: { method: 'session.list', params: { a: 1 } }, cookie: 'dsh_mobile=1' })
+    assert.equal(forged.status, 401)
 
     // 白名单内方法 → 转发成功（桥把内核响应原样透传，不包 result 层）
-    const ok = await request(base + '/api/rpc', { method: 'POST', body: { method: 'session.list', params: { a: 1 } }, cookie: 'dsh_mobile=1' })
+    const ok = await request(base + '/api/rpc', { method: 'POST', body: { method: 'session.list', params: { a: 1 } }, cookie: issuedCookie })
     assert.equal(ok.status, 200)
     assert.equal(ok.body.ok, true)
     assert.equal(ok.body.method, '/api/session.list')
 
     // 白名单外方法 → 400
-    const denied = await request(base + '/api/rpc', { method: 'POST', body: { method: 'fs.read', params: {} }, cookie: 'dsh_mobile=1' })
+    const denied = await request(base + '/api/rpc', { method: 'POST', body: { method: 'fs.read', params: {} }, cookie: issuedCookie })
     assert.equal(denied.status, 400)
 
-    // disconnect RPC → token 轮换，旧 token 失效
+    // disconnect RPC → token 轮换 + 会话 cookie 失效（BUG-B-010：旧 cookie 不得再可用）
     const disc = bridge.disconnect()
     assert.equal(disc.ok, true)
     const oldToken = await request(base + '/api/pair-state?token=' + encodeURIComponent(token))
     assert.equal(oldToken.status, 403)
+    const stale = await request(base + '/api/rpc', { method: 'POST', body: { method: 'session.list' }, cookie: issuedCookie })
+    assert.equal(stale.status, 401)
 
     await bridge.stop()
   } finally {
@@ -152,8 +162,15 @@ test('phone bridge: 服务未就绪时 RPC 转发返回 503', async () => {
   const { bridge } = launch(null)
   const info = await bridge.start()
   const base = `http://127.0.0.1:${info.port}`
+  const token = new URL(info.url).searchParams.get('token') as string
   bridge.decide(true)
-  const res = await request(base + '/api/rpc', { method: 'POST', body: { method: 'session.list' }, cookie: 'dsh_mobile=1' })
+  // BUG-B-010 修复后须先完成配对拿到有效会话 cookie（伪造 cookie 只会 401，
+  // 到不了转发层），再验证内核未就绪时转发返回 503。
+  const poll = await request(base + '/api/pair-state?token=' + encodeURIComponent(token))
+  const rawCookie = poll.headers['set-cookie']
+  const setCookie = Array.isArray(rawCookie) ? rawCookie.join('; ') : (rawCookie ?? '')
+  const issuedCookie = (setCookie.match(/dsh_mobile=[^;]+/) || [''])[0]
+  const res = await request(base + '/api/rpc', { method: 'POST', body: { method: 'session.list' }, cookie: issuedCookie })
   assert.equal(res.status, 503)
   await bridge.stop()
 })

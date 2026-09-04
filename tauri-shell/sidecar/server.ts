@@ -341,6 +341,9 @@ say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
 // ---- vnext 初始化：日志 sink + 共享状态 + 恢复中心 ctx ----------------------
 setLogSink(log);
 initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
+// BUG-G-103：sidecar 自举不经过 lib/boot.ts（其 436 行才从 settings 同步该
+// 字段），state.notifyOnTurnEnd 恒为默认 true——启动时先同步一次。
+state.notifyOnTurnEnd = (loadSettings() as { notifyOnTurnEnd?: boolean }).notifyOnTurnEnd !== false;
 bridge.ensureGuard = guardBoxMod.ensureGuard;
 bridge.processPendingMarketOps = marketMod.processPendingMarketOps;
 bridge.syncCompanionPlugins = companionSyncMod.syncCompanionPlugins;
@@ -751,6 +754,15 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
       return { ok: false, error: String(((e as Error).message) || e) };
     }
   },
+  // 拖入文件保存（BUG-G-002：bridge.ts fileDrop.save 仍调用本通道，处理器与
+  // 实现在统一 lib 重构中被一并误删，拖入文件恒 method not found 静默失效）。
+  'file-drop.save': (p): Record<string, unknown> => {
+    try {
+      return (pluginOpsMod.fileDropSave as (d: string, n: string) => Record<string, unknown>)(String((p && p.dataUrl) || ''), String((p && p.name) || '拖入文件'));
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
   'files.revert': (p): Record<string, unknown> => {
     const changes = (p && p.changes) as Array<{ path?: string; oldText?: string; newText?: string }>;
     if (!Array.isArray(changes) || changes.length === 0 || changes.length > 300) return { results: [] };
@@ -923,6 +935,9 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
       case 'toggle-notify': {
         s.notifyOnTurnEnd = s.notifyOnTurnEnd === false;
         saveSettings(s as Record<string, unknown>);
+        // BUG-G-103：chrome:init 读的是 state.notifyOnTurnEnd（lib/ipc/app.ts），
+        // 只写 settings 不回写 state 会导致菜单勾选态与真实设置脱钩。
+        state.notifyOnTurnEnd = s.notifyOnTurnEnd === true;
         return { notifyOnTurnEnd: s.notifyOnTurnEnd, exitAction: s.exitAction || 'ask' };
       }
       case 'toggle-shortcut-policy': {
@@ -960,8 +975,15 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
         return { ok: true };
       }
       case 'export-logs': {
-        const f = methods['recovery.export-logs'] as () => Promise<Record<string, unknown>>;
-        return typeof f === 'function' ? await f() : { ok: false, error: 'unavailable' };
+        // BUG-G-101：原名 'recovery.export-logs' 全仓不存在；真实通道是
+        // BUG-B-008 装配的 'chrome:export-logs'（lib/ipc/recovery.ts:68）。
+        // 该 handler 校验 fromMainSession，须把桥附带的会话 token 透传进去。
+        const f = methods['chrome:export-logs'] as ((p2?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
+        if (typeof f !== 'function') return { ok: false, error: 'unavailable' };
+        const token = p && typeof (p as Record<string, unknown>).__sessionToken === 'string'
+          ? (p as Record<string, unknown>).__sessionToken as string
+          : '';
+        return await f({ __sessionToken: token });
       }
       case 'about': {
         // 壳层把主窗导航到 /about（back=当前 webUrl），菜单本身无返回值。
@@ -1180,6 +1202,13 @@ rescueIntegration.initRescue({
   bootRestart: () => (methods['boot.restart'] as (p?: unknown) => Promise<Record<string, unknown>>)({} as Record<string, unknown>),
 });
 Object.assign(methods, rescueIntegration.rescueMethods());
+
+// ---- Task 7.1 收口（BUG-B-008）：把 lib/ipc 的冒号通道注册进 methods 表 ----
+// createSidecarIpcSurface(methods) 的 register 会把 chrome:init / dsh:* /
+// guard:action / onboard:* / snapshot:* / chrome:recovery-* 等通道逐一写入
+// methods；缺了这行装配，页面桥（bridge.ts 全部走冒号通道）在 handleLine
+// 里一律 method not found，getInfo/菜单开关/快照/文件打开/复制/向导静默失效。
+registerIpc(createSidecarIpcSurface(methods as Record<string, (p?: Record<string, unknown>) => unknown>));
 
 function respond(msg: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(msg) + '\n');

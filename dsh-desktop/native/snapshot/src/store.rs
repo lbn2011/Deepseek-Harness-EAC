@@ -45,7 +45,10 @@ impl Store {
 
     /// 对象文件路径（内容寻址：<hash[..2]>/<hash>）。
     pub fn object_path(&self, hash: &str) -> PathBuf {
-        let prefix = &hash[..2.min(hash.len())];
+        // BUG-F-012：&hash[..2] 按字节切片，多字节 UTF-8 字符在第 2 字节
+        // 落在字符中间时直接 panic（napi 默认不 catch_unwind，跨 FFI = 宿主
+        // 进程 abort）；get() 在非字符边界返回 None，回退空前缀安全降级。
+        let prefix = hash.get(..2.min(hash.len())).unwrap_or("");
         self.objects_dir().join(prefix).join(hash)
     }
 
@@ -95,6 +98,11 @@ impl Store {
     // -- snapshots ----------------------------------------------------------
 
     pub fn load_snapshot(&self, id: &str) -> Result<DiskSnapshot, String> {
+        // BUG-F-011：snapshot_id 来自 FFI 边界（TS 侧可调），必须先过白名单——
+        // 否则 `../../x` 之类的穿越串可读写存储目录外任意 .json。
+        if !valid_snapshot_id(id) {
+            return Err(format!("非法快照 id: {id}"));
+        }
         let p = self.snapshots_dir().join(format!("{id}.json"));
         let text = fs::read_to_string(&p).map_err(|_| format!("快照不存在: {id}"))?;
         serde_json::from_str(&text).map_err(|e| format!("快照损坏 {id}: {e}"))
@@ -128,6 +136,11 @@ impl Store {
     }
 
     pub fn delete_snapshot_file(&self, id: &str) -> Result<(), String> {
+        // BUG-F-011：同 load_snapshot——删除路径必须先过 id 白名单，
+        // 否则可删除存储目录外任意 .json 文件。
+        if !valid_snapshot_id(id) {
+            return Err(format!("非法快照 id: {id}"));
+        }
         let p = self.snapshots_dir().join(format!("{id}.json"));
         fs::remove_file(&p).map_err(|e| format!("删除快照失败: {e}"))
     }
@@ -212,6 +225,18 @@ pub fn valid_branch_name(name: &str) -> bool {
     }
     name.chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+}
+
+/// BUG-F-011：快照 id 白名单（FFI 边界校验）——仅 ASCII 字母数字与 -_.，
+/// 拒绝 `..`、路径分隔符、盘符、UNC，杜绝目录穿越。合法 id 由宿主侧
+/// 生成为时间戳+随机串（如 20260830-abc123），本字符集完整覆盖。
+pub fn valid_snapshot_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && !id.contains("..")
 }
 
 /// HH:MM 合法性。

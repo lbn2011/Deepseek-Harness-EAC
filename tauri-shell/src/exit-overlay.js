@@ -31,18 +31,29 @@
     '</div>',
   ].join('\n')
 
+  // BUG-B-005：style 节点与 keydown 监听器纳入 dismiss 生命周期——
+  // 否则按钮 dismiss 后监听器残留（每次 Escape 重复发 win.close-dialog），
+  // 且每次 show 叠加一个监听器与一个 <style>。
+  var styleEl = null
+  var keyHandler = null
+
   function dismiss() {
     var el = document.getElementById('dsh-exit-overlay')
     if (el) el.remove()
+    if (styleEl) { styleEl.remove(); styleEl = null }
+    if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null }
   }
 
   function show() {
     dismiss()
-    var style = document.createElement('style')
-    style.textContent = CSS
-    document.head.appendChild(style)
+    styleEl = document.createElement('style')
+    styleEl.textContent = CSS
+    document.head.appendChild(styleEl)
     document.body.insertAdjacentHTML('beforeend', HTML)
-    document.querySelectorAll('[data-v]').forEach(function (btn) {
+    // BUG-B-004：选择器必须限定在 overlay 子树内——裸 [data-v] 会把宿主页面
+    // 里所有带 data-v 属性的元素也绑上 overlay 的 click 处理器（误触发
+    // dismiss 并向壳层发 win.close-* RPC）。
+    document.querySelectorAll('#dsh-exit-overlay [data-v]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var v = btn.getAttribute('data-v')
         dismiss()
@@ -54,16 +65,15 @@
         }
       })
     })
-    // Escape / Cmd+W 取消
-    document.addEventListener('keydown', function onKey(e) {
+    // Escape / Cmd+W 取消（监听器由 dismiss 统一移除，无需自移除）
+    keyHandler = function (e) {
       if (e.key === 'Escape' || (e.metaKey && e.key === 'w')) {
         e.preventDefault()
         dismiss()
         if (window.dshDesktop && window.dshDesktop._call) window.dshDesktop._call('win.close-dialog', {})
-        else dismiss()
-        document.removeEventListener('keydown', onKey)
       }
-    })
+    }
+    document.addEventListener('keydown', keyHandler)
   }
 
   window.__dshExitOverlay = { show: show, dismiss: dismiss }

@@ -373,7 +373,9 @@ function validateSuggestion(item: any): SuggestionResult {
   const action = String(item.action || '');
   if (!SUGGESTION_ACTIONS.has(action)) return { ok: false, error: '未知动作: ' + action };
   const params = item.params && typeof item.params === 'object' ? item.params : {};
-  const risk = ['low', 'medium', 'high'].includes(item.risk) ? item.risk : 'low';
+  // BUG-C-008：非法/缺失的 risk 必须 fail-closed——归为 'low' 会被
+  // runAutoRepair 当作低风险自动执行（包括改写 settings.yaml 的 edit-file）。
+  const risk = ['low', 'medium', 'high'].includes(item.risk) ? item.risk : 'high';
   const reason = typeof item.reason === 'string' ? item.reason.slice(0, 1000) : '';
   const out: ValidSuggestion = { action, params: {}, risk, reason };
 

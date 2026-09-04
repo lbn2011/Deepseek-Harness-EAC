@@ -82,9 +82,15 @@ export function loadSettings(ctx: UpdCtx): DshSettings {
 }
 
 export function saveSettings(ctx: UpdCtx, s: DshSettings): void {
+  // BUG-C-013：tmp + rename 原子替换——直写目标文件时进程在写中途崩溃会留下
+  // 截断 JSON，loadSettings 静默回退 {}，端口/跳过版本/回退信息全部丢失。
+  const file = settingsPath(ctx);
+  const tmp = file + '.tmp';
   try {
-    fs.writeFileSync(settingsPath(ctx), JSON.stringify(s, null, 2) + '\n');
+    fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n');
+    fs.renameSync(tmp, file);
   } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 尽力清理 */ }
     ctx.log('update', '保存 settings 失败: ' + String((err as Error).message));
   }
 }
@@ -105,8 +111,11 @@ export function overlayBinPath(ctx: UpdCtx): string | null {
 
 export function overlayVersion(ctx: UpdCtx): string | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pkg = require(path.join(overlayDir(ctx), 'node_modules', PKG, 'package.json')) as { version?: string };
+    // BUG-C-012：不能用 require 读 package.json——require 有模块缓存，
+    // applyUpdate 原子换名后同进程再读仍返回更新前的旧版本号。
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(overlayDir(ctx), 'node_modules', PKG, 'package.json'), 'utf8'),
+    ) as { version?: string };
     return pkg.version ?? null;
   } catch {
     return null;

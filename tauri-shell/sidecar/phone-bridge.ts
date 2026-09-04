@@ -154,8 +154,13 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
   let lanUrl = '';
   let pairing: PairingState | null = null;
   let mobileReady = false; // 手机端客户端尚未开发
+  // BUG-B-010：会话凭证与配对口令分离——配对批准后签发随机会话串，
+  // disconnect/重新配对即失效；不再使用静态常量 cookie（静态值任何人
+  // 可伪造，且 disconnect 后旧 cookie 一年内仍有效）。
+  let sessionToken: string | null = null;
 
   function rotatePairing(): void {
+    sessionToken = null; // 新配对流程开启时，既有会话凭证一并作废
     pairing = {
       token: randomBytes(32).toString('base64url'),
       expiresAt: Date.now() + PAIRING_TTL_MS,
@@ -270,8 +275,11 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
       };
       if (state === 'approved') {
         // 配对成功即签发一年期 dsh_mobile 会话 cookie（移动端随后继访问携带）。
+        // BUG-B-010：cookie 值为本次配对签发的随机会话串（非常量），
+        // disconnect/重新配对后由 sessionToken=null 立即失效。
+        if (sessionToken === null) sessionToken = randomBytes(32).toString('base64url');
         headers['set-cookie'] =
-          `dsh_mobile=1; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE}`;
+          `dsh_mobile=${sessionToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE}`;
       }
       const payload = JSON.stringify({ state, expiresAt: pairing.expiresAt });
       res.writeHead(200, headers);
@@ -281,7 +289,9 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
 
     if (req.method === 'POST' && path === '/api/rpc') {
       const cookies = (req.headers.cookie ?? '').split(';').map((c) => c.trim());
-      if (!cookies.some((c) => c === 'dsh_mobile=1')) {
+      // BUG-B-010：校验随机会话串（timingSafeEqual 防时序侧信道），
+      // 未配对/已断开签发的旧 cookie 一律 401。
+      if (sessionToken === null || !cookies.some((c) => tokenEquals(c, `dsh_mobile=${sessionToken}`))) {
         json(res, 401, { error: 'not paired' });
         return;
       }
@@ -307,7 +317,9 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         return;
       }
       if (path === '/desktop/decide') {
-        if (pairing === null || pairing.decided !== null) {
+        if (pairing === null || pairing.decided !== null || Date.now() > pairing.expiresAt) {
+          // BUG-B-011：过期配对不可再批准（否则过期 token 仍能换发会话 cookie，
+          // 5 分钟 TTL 边界失效）。
           json(res, 409, { error: 'no pending pairing' });
           return;
         }
@@ -397,7 +409,8 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
     },
     /** 桌面端批准/拒绝一次待决配对（RPC 面，WS 桥本身回环）。 */
     decide(approved: boolean): { ok: boolean; error?: string; approved?: boolean } {
-      if (pairing === null || pairing.decided !== null) {
+      if (pairing === null || pairing.decided !== null || Date.now() > pairing.expiresAt) {
+        // BUG-B-011：过期配对不可再批准（同 /desktop/decide 的 TTL 闸门）。
         return { ok: false, error: 'no pending pairing' };
       }
       pairing.decided = approved === true;

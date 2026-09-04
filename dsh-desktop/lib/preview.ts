@@ -96,7 +96,14 @@ export function startPreviewStaticServer(): void {
         res.end();
         return;
       }
-      fs.createReadStream(p).pipe(res);
+      // BUG-G-104：读流必须挂 error 监听——stat 通过后文件被删/独占/读失败时，
+      // 无监听的 'error' 事件按 Node 语义抛未捕获异常，打挂整个 sidecar 进程。
+      const rs = fs.createReadStream(p);
+      rs.on('error', () => {
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
+      });
+      rs.pipe(res);
     } catch {
       res.writeHead(404);
       res.end();

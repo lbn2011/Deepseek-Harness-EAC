@@ -58,8 +58,11 @@ export async function buildDiagnosticsZip(opts: DiagnosticsZipOpts): Promise<str
   }
   const archiverFn = archiver as (format: string, opts?: Record<string, unknown>) => ArchiverLike;
   const archive = archiverFn('zip', { zlib: { level: 9 } });
+  // BUG-E-003：在 error 事件回调里同步 throw 不会被外层 Promise 捕获，而是
+  // 成为未捕获异常打挂主进程；改为记录错误，由收尾 Promise 拒绝/显式抛出。
+  let archiveError: Error | null = null;
   archive.on('error', (e: Error) => {
-    throw e;
+    archiveError = e;
   });
   archive.pipe(output);
 
@@ -259,12 +262,14 @@ export async function buildDiagnosticsZip(opts: DiagnosticsZipOpts): Promise<str
   const finished = new Promise<void>((res, rej) => {
     output.once('close', () => res());
     output.once('error', rej);
+    archive.on('error', rej); // BUG-E-003：打包中途的 archive 错误同样拒绝收尾
     process.nextTick(() => {
       if (output.closed) res();
     });
   });
   await archive.finalize();
   await finished;
+  if (archiveError) throw archiveError;
 
   return zipPath;
 }

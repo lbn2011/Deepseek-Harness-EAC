@@ -52,13 +52,33 @@ const WS_PORT: u16 = 19873;
 
 mod nav_fence;
 
+/// 主窗桥会话 token（BUG-B-008 配套）：bridge.ts 把 __DSH_BRIDGE_SESSION__
+/// 作为 __sessionToken 附在每个 RPC 帧上，sidecar 的 IPC surface 据此把首个
+/// chrome:init 调用方登记为 state.mainSession（sender 校验 = 会话身份绑定，
+/// 对齐 legacy-shell 的 webContents.id 语义）。进程级随机串，每窗口注入。
+fn bridge_session_token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("dsh-{:x}-{:x}", std::process::id(), nanos)
+    })
+}
+
 fn main_initialization_script() -> String {
     let file = resource_root().join("sidecar").join("snapshot-ui.js");
     let snapshot = std::fs::read_to_string(file)
         .unwrap_or_default()
         .replace("Object.defineProperty(exports, \"__esModule\", { value: true });", "")
         .replace("exports.openSnapshotPanel = openSnapshotPanel;", "");
-    format!("{}\n{}\nwindow.__dshOpenSnapshotPanel=openSnapshotPanel;", BRIDGE_JS, snapshot)
+    format!(
+        "window.__DSH_BRIDGE_SESSION__='{}';\n{}\n{}\nif(typeof openSnapshotPanel==='function'){{window.__dshOpenSnapshotPanel=openSnapshotPanel;}}",
+        bridge_session_token(),
+        BRIDGE_JS,
+        snapshot
+    )
 }
 
 trait Platform {
@@ -222,6 +242,15 @@ struct WindowState {
     w: f64,
     h: f64,
     maximized: bool,
+    /// 保存时窗口所在显示器的 scale_factor（BUG-G-003：x/y 为物理像素、
+    /// w/h 为逻辑尺寸，恢复时中心点换算必须用它而非主屏 scale；
+    /// 旧版状态文件无此字段，回退 1.0 时行为与旧版一致）。
+    #[serde(default = "default_window_scale")]
+    scale: f64,
+}
+
+fn default_window_scale() -> f64 {
+    1.0
 }
 
 fn window_state_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -249,6 +278,7 @@ fn save_window_state(app: &tauri::AppHandle) {
         w: logical.width,
         h: logical.height,
         maximized: win.is_maximized().unwrap_or(false),
+        scale,
     };
     let json = match serde_json::to_string(&state) {
         Ok(j) => j,
@@ -262,8 +292,16 @@ fn save_window_state(app: &tauri::AppHandle) {
             eprintln!("[shell] window-state mkdir failed: {}", e);
         }
     }
-    if let Err(e) = std::fs::write(&path, json) {
+    // BUG-G-004：tmp + rename 原子替换，避免写中途崩溃留下截断 JSON
+    //（截断会被 load 静默吞掉，窗口位置记忆无声丢失）。
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, json) {
         eprintln!("[shell] window-state save failed: {}", e);
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        eprintln!("[shell] window-state rename failed: {}", e);
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 
@@ -319,9 +357,16 @@ fn resolved_initial_bounds(
     if let Some(st) = load_window_state(app) {
         // 目标显示器：窗口中心点所在显示器（副屏拼接/拔插后旧坐标仍指向其它
         // 屏也算合法；完全失效时 monitor_from_point 返回 None → 回退上面的默认）。
-        let scale = primary.as_ref().map(|p| p.scale_factor()).unwrap_or(1.0);
-        let cx = st.x as f64 + st.w * scale / 2.0;
-        let cy = st.y as f64 + st.h * scale / 2.0;
+        // BUG-G-003：st.x/st.y 是物理像素、st.w/st.h 是逻辑尺寸，中心点换算
+        // 必须用保存时所在显示器的 scale（而非主屏 scale）——混合 DPI 多屏下
+        // 用主屏 scale 会把中心点算偏，选错目标显示器导致窗口「乱跳」。
+        let saved_scale = if st.scale.is_finite() && st.scale > 0.0 {
+            st.scale
+        } else {
+            1.0
+        };
+        let cx = st.x as f64 + st.w * saved_scale / 2.0;
+        let cy = st.y as f64 + st.h * saved_scale / 2.0;
         let target = app
             .monitor_from_point(cx, cy)
             .ok()
@@ -338,13 +383,17 @@ fn resolved_initial_bounds(
             let eff_min_h = min_h.min(work_h - FIRST_RUN_MARGIN).max(1.0);
             let w = st.w.clamp(eff_min_w, work_w.max(eff_min_w));
             let h = st.h.clamp(eff_min_h, work_h.max(eff_min_h));
-            let min_vis = MIN_VISIBLE_W.max(w * 0.4);
+            // BUG-G-003：min_vis 与 wa.position/wa.size 同是物理像素才可比——
+            // 逻辑值须乘目标显示器 mscale，否则高 DPI 下钳位过松，窗口可被
+            // 恢复到仅剩几十物理像素可见的近屏外位置。
+            let min_vis_phys = MIN_VISIBLE_W.max(w * 0.4) * mscale;
+            let min_vis_h_phys = 40.0 * mscale;
             let x = (st.x as f64)
                 .max(wa.position.x as f64)
-                .min(wa.position.x as f64 + wa.size.width as f64 - min_vis);
+                .min(wa.position.x as f64 + wa.size.width as f64 - min_vis_phys);
             let y = (st.y as f64)
                 .max(wa.position.y as f64)
-                .min(wa.position.y as f64 + wa.size.height as f64 - 40.0);
+                .min(wa.position.y as f64 + wa.size.height as f64 - min_vis_h_phys);
             out_w = w;
             out_h = h;
             out_pos = Some((x / mscale, y / mscale));
@@ -1816,6 +1865,11 @@ fn main() {
                                     if app_died.get_webview_window("main").is_none() {
                                         let (sim_w, sim_h, sim_pos, sim_max) =
                                             resolved_initial_bounds(&app_died);
+                                        // BUG-G-106：重建窗必须挂同一套初始化脚本——否则
+                                        // /died 页「重新启动」成功后该窗被导航到 webUrl，
+                                        // 桥永不注入：玻璃栏/菜单按钮消失、无边框窗口无法
+                                        // 拖动/最小化/关闭。
+                                        let init = main_initialization_script();
                                         let mut builder = tauri::webview::WebviewWindowBuilder::new(
                                             &app_died,
                                             "main",
@@ -1824,7 +1878,10 @@ fn main() {
                                         .title("Deepseek Harness EAC")
                                         .inner_size(sim_w, sim_h)
                                         .min_inner_size(min_inner_w(), min_inner_h())
-                                        .decorations(false);
+                                        .decorations(false)
+                                        .on_navigation(is_allowed_main_navigation)
+                                        .disable_drag_drop_handler()
+                                        .initialization_script(&init);
                                         if let Some((px, py)) = sim_pos {
                                             builder = builder.position(px, py);
                                         }
@@ -1860,7 +1917,12 @@ fn main() {
             let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &recovery, &restart, &relaunch, &sep2, &feedback, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("Deepseek Harness EAC")
-                .menu(&menu);
+                .menu(&menu)
+                // BUG-G-105：tray-icon 默认 menu_on_left_click=true，左键单击会
+                // 先弹菜单、再由下面的 Click 处理器 show+set_focus 把菜单顶掉
+                //（表现为「托盘菜单打不开/闪一下即关」）。左键专职切换显隐，
+                // 菜单只留右键。
+                .menu_on_left_click(false);
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
@@ -1971,7 +2033,10 @@ fn main() {
                 });
                 let st = BridgeState { sidecar: state.sidecar.clone() };
                 tauri::async_runtime::block_on(async move {
-                    let sc = st.sidecar.lock().await.clone();
+                    // BUG-B-002：先 take() 把 Arc 从共享槽位移出（而非 clone），
+                    // 否则 BRIDGE 里仍持有一份强引用，Arc::into_inner 恒 None，
+                    // 兜底 kill 是死代码（shutdown 失败/超时后 sidecar 成孤儿）。
+                    let sc = st.sidecar.lock().await.take();
                     if let Some(sc) = sc {
                         let _ = tokio::time::timeout(
                             std::time::Duration::from_secs(10),
