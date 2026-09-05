@@ -14,18 +14,18 @@
     "src",
     "client",
     "cordis.patch.yml",
-        "README.md",
+    "README.md",
     "README.zh.md"
   ],
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
     }
   },
-    "license": "MIT",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/christophersmith2737-commits/OffPeak.git"
@@ -38,7 +38,7 @@
     "deepseek",
     "price",
     "peak",
-        "schedule",
+    "schedule",
     "offpeak",
     "tidal-pricing",
     "reminder"

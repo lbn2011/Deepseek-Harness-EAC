@@ -22,7 +22,9 @@ import http from "node:http";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 
 const name = "eac-core-bridge";
-const inject = ["tools", "sessions"];
+// 仅声明实际使用的服务：原列表里的 "sessions" 全文件从未消费（无 ctx.sessions），
+// 多余声明会让宿主做无谓的作用域装配。
+const inject = ["tools"];
 
 /** 回环端点（环境注入；缺失即空转）。 */
 const BASE = process.env.DSH_EAC_BRIDGE_URL || "";
@@ -36,8 +38,12 @@ const CONTEXT_TIMEOUT_MS = 1_200;
 /** 工具调用超时由 Supervisor 侧统一（120s），这里只做传输层兜底。 */
 const INVOKE_TIMEOUT_MS = 130_000;
 
-/** 已注册工具名集合（轮询时只补新工具，不重复注册）。 */
-const registered = new Set();
+/** 已注册工具名集合（轮询时只补新工具，不重复注册）。
+ *  per-apply（非模块级）：宿主重载/插件禁用后再启用会拿到全新 tools 注册表，
+ *  模块级 Set 会让已登记名字永不重新注册（工具静默消失）；随 effect 处置清空。 */
+
+/** 工具清单轮询定时器（模块级，保证任意时刻至多一个 interval）。 */
+let toolsRefreshTimer = null;
 
 /**
  * JSON POST（带 token + 超时；失败抛错由调用方决定降级）。
@@ -87,7 +93,7 @@ function bridgeToolName(pluginId, tool) {
 }
 
 /** 从端点拉工具清单并注册新增项。 */
-async function syncTools(ctx) {
+async function syncTools(ctx, registered) {
   let data;
   try {
     data = await post("/tools", {}, 5_000);
@@ -98,6 +104,14 @@ async function syncTools(ctx) {
   for (const t of data.tools ?? []) {
     const full = bridgeToolName(t.pluginId, t.name);
     if (registered.has(full)) continue;
+    // bridgeToolName 把 pluginId/tool 折叠进 64 个 [a-z0-9_]，不同插件可能
+    // 折出同名；注册前查重，已存在（他方先注册）时告警并跳过，绝不覆盖。
+    // 计入 registered 保证只告警一次，之后轮询静默跳过。
+    if (typeof ctx.tools.get === "function" && ctx.tools.get(full)) {
+      registered.add(full);
+      ctx.logger.warn(`[eac-bridge] 桥接工具名冲突，跳过注册: ${full}（${t.pluginId}.${t.name} 与既有工具同名）`);
+      continue;
+    }
     registered.add(full);
     const pluginId = t.pluginId;
     const tool = t.name;
@@ -132,10 +146,23 @@ export async function apply(ctx) {
   }
 
   // ── 工具桥接：首拉 + 周期补注册 ─────────────────────────────────────────
-  await syncTools(ctx);
-  setInterval(() => {
-    syncTools(ctx).catch(() => {});
-  }, TOOLS_REFRESH_MS).unref?.();
+  const registered = new Set();
+  await syncTools(ctx, registered);
+  // 幂等：apply 可能被重入（组件重载/重复启用），先清掉旧轮询再建新的，
+  // 避免多个 interval 并行重复拉取与注册。
+  if (toolsRefreshTimer !== null) clearInterval(toolsRefreshTimer);
+  // effect 兜底 teardown：插件禁用/宿主卸载时 interval 必须死（否则禁用后
+  // 仍以旧 ctx 轮询）；registered 随处置清空，重启用拿到全新注册表能重新登记。
+  ctx.effect(() => {
+    toolsRefreshTimer = setInterval(() => {
+      syncTools(ctx, registered).catch(() => {});
+    }, TOOLS_REFRESH_MS);
+    toolsRefreshTimer.unref?.();
+    return () => {
+      if (toolsRefreshTimer !== null) { clearInterval(toolsRefreshTimer); toolsRefreshTimer = null; }
+      registered.clear();
+    };
+  });
 
   // ── 上下文注入：agent 作用域的 system-prompt/assemble 瀑布 ─────────────
   // （与 tdai-memory 同一挂法：session/created 后一拍再取 agent.ctx，

@@ -44,6 +44,11 @@
     if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null }
   }
 
+  // 每次 show() 都会挂一个 keydown 监听（Escape 取消用）：旧实现只有 Esc
+  // 路径自移除，反复开关 overlay 会把监听器累加到 document 上。show() 开头
+  // 先经 dismiss() 卸掉旧监听，杜绝堆积。
+  var activeKeyHandler = null
+
   function show() {
     dismiss()
     styleEl = document.createElement('style')

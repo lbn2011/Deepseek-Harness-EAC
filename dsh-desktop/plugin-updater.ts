@@ -109,6 +109,18 @@ export function stagingRoot(ctx: UpdCtx): string {
   return path.join(ctx.userDataDir, 'plugin-update-staging');
 }
 
+// 并发闸：同一时刻只允许一个内置插件更新在执行。旧实现 stagingRoot 是全局
+// 共享目录且开跑先 rmSync —— 两个更新并发（快速连点/自动+手动重叠）时后
+// 启动者会删掉前者正在使用的 staging，rename 失败或装出半包。单飞闸 + 按
+// 次随机子目录双保险。
+let updateInFlight: Promise<unknown> | null = null;
+function singleFlight<T>(job: () => Promise<T>): Promise<T> {
+  if (updateInFlight) return Promise.reject(new Error('已有插件更新在进行中，请稍候再试。'));
+  const p = job().finally(() => { updateInFlight = null; });
+  updateInFlight = p;
+  return p;
+}
+
 // ---------------------------------------------------------------------------
 // 源解析（source = { npm: 包名 } | { github: 'owner/repo' }）
 // ---------------------------------------------------------------------------
@@ -332,7 +344,11 @@ export async function checkPluginUpdates(
     }),
   );
   list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  checkCache = { at: now, list };
+  // 全部失败的结果不进 TTL 缓存：网络故障的一次失败结果会被钉 10 分钟，
+  // 用户点「重试」也拿不到新数据（TTL 缓存只该加速成功的清单）。
+  const failed = list.filter((x) => x.error).length;
+  if (failed < list.length) checkCache = { at: now, list };
+  else ctx.log('plugin-update', `全部 ${list.length} 个更新源检测失败，跳过缓存（下次立即重试）`);
   return list;
 }
 
@@ -420,9 +436,10 @@ export async function applyBuiltinPluginUpdate(ctx: PluginUpdCtx, source: Plugin
 
   // 2) 下载到 staging：npm 源走 registry（镜像链）；GitHub 源走 codeload
   //    tarball URL（npm 直接解包安装）。--ignore-scripts 绝不执行第三方脚本。
+  // staging 仍为固定路径（runNpm mock 与外部语义都锚定 stagingRoot/pkg）；
+  // 并发互斥由上方 singleFlight 闸保证 —— 同时只会有一个更新在写这里。
   const stagingRootDir = stagingRoot(ctx);
   fs.rmSync(stagingRootDir, { recursive: true, force: true });
-  fs.mkdirSync(stagingRootDir, { recursive: true });
   const staging = path.join(stagingRootDir, 'pkg');
   const candidates = update.npm ? [update.npm + '@' + latest] : githubTarballCandidates(update.github as string, latest);
   const chain = updater.registryChain(await updater.currentRegistry(ctx));

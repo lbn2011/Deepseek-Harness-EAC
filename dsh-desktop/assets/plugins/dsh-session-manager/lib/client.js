@@ -157,20 +157,40 @@ window.__ModuleLoader__.load({
 		// ------------------------------------------------------------------
 		// RPC 封装
 		// ------------------------------------------------------------------
-		function workspaceApi(context) {
-			return context.connection.api.workspace;
+		// 内核 0.1.2-alpha.1 起 connection 服务不再暴露 api 门面（rc.2 的
+		// connection.api.workspace 已随 typert RPC 换血移除，缺失时读 .workspace
+		// 正是「操作失败: Cannot read properties of undefined (reading 'workspace')」
+		// 的来源）。0.1.2 的 workspace 命令面挂在 workspaces 服务
+		// （WorkspaceController 命令层）上：成功 resolve、失败抛 Error（消息形如
+		// "workspace session delete failed: <code>: <message>"）；旧内核仍走
+		// connection.api.workspace 的 unary 信封（{ result: { ok, … } }）。
+		// 这里归一为「成功 resolve / 失败 reject(带消息的 Error)」。
+		function workspaceCommands(context) {
+			return context.workspaces && typeof context.workspaces.deleteSession === "function" ? context.workspaces : void 0;
 		}
 
-		function rpcErrorMessage(result) {
-			if (result && result.error) return result.error.message || JSON.stringify(result.error);
-			return "unknown error";
+		function throwOnRpcFailure(result) {
+			if (!result.ok) throw new Error((result.error && result.error.message) || JSON.stringify(result.error));
+		}
+
+		async function deleteSessionById(context, sessionId) {
+			const workspaces = workspaceCommands(context);
+			if (workspaces) return void (await workspaces.deleteSession(sessionId));
+			const { result } = await context.connection.api.workspace.deleteSession({ sessionId });
+			throwOnRpcFailure(result);
+		}
+
+		async function unarchiveSessionById(context, sessionId) {
+			const workspaces = workspaceCommands(context);
+			if (workspaces) return void (await workspaces.unarchiveSession(sessionId));
+			const { result } = await context.connection.api.workspace.unarchiveSession({ sessionId });
+			throwOnRpcFailure(result);
 		}
 
 		async function unarchiveSession(context, sessionId) {
 			try {
-				const { result } = await workspaceApi(context).unarchiveSession({ sessionId });
-				if (!result.ok) window.alert(L.failed + ": " + rpcErrorMessage(result));
-				return result.ok === true;
+				await unarchiveSessionById(context, sessionId);
+				return true;
 			} catch (error) {
 				window.alert(L.failed + ": " + ((error && error.message) || error));
 				return false;
@@ -180,15 +200,11 @@ window.__ModuleLoader__.load({
 		async function deleteSession(context, sessionId, { confirmText } = {}) {
 			if (!window.confirm(confirmText || L.confirmDelete)) return false;
 			try {
-				const { result } = await workspaceApi(context).deleteSession({ sessionId });
-				if (!result.ok) {
-					const message = rpcErrorMessage(result);
-					window.alert(message && /running|live/.test(message) ? L.runningRejected : L.failed + ": " + message);
-					return false;
-				}
+				await deleteSessionById(context, sessionId);
 				return true;
 			} catch (error) {
-				window.alert(L.failed + ": " + ((error && error.message) || error));
+				const message = (error && error.message) || String(error);
+				window.alert(message && /running|live/.test(message) ? L.runningRejected : L.failed + ": " + message);
 				return false;
 			}
 		}
@@ -238,7 +254,7 @@ window.__ModuleLoader__.load({
 										className: "dsm-btn",
 										title: L.restoreHint,
 										disabled: busy,
-										onClick: () => run(() => unarchiveSession({ connection }, row.id)),
+										onClick: () => run(() => unarchiveSession({ connection, workspaces }, row.id)),
 										children: L.restore
 									}),
 									jsx("button", {
@@ -246,7 +262,7 @@ window.__ModuleLoader__.load({
 										className: "dsm-btn dsm-btn-danger",
 										title: L.deleteHint,
 										disabled: busy,
-										onClick: () => run(() => deleteSession({ connection }, row.id)),
+										onClick: () => run(() => deleteSession({ connection, workspaces }, row.id)),
 										children: L.delete
 									})
 								]

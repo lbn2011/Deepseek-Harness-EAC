@@ -1,19 +1,14 @@
-// v4.4（PR79 集成回归）：applyUpdate 必须把应用自带的 node.exe 内联进
-// apply-update.cmd 脚本体。
+// v4.4（PR79 集成回归）：applyUpdate 必须把应用自带的 node.exe 经隐藏
+// PowerShell 的 Unicode 参数链传给 apply-update.cmd。
 //
 // manifest.json 的生成（备份分支）需要执行一段内联 JS。目标用户机器普遍
 // 没有系统 Node —— 脚本必须用打包在 resources\node\node.exe 的运行时
 // 路径，绝不能裸调 PATH 上的 node（errorlevel 9009 → BAD=2 → 更新永远
 // 中止回滚，与 v3.0.1 自举陷阱同类）。
 //
-// 传递方式的坑：
-//   · 第 10 参 %~10 —— batch 直接引用只到 %9，`%~10` 解析为 `%~1`+`0`
-//     （实测 NODEEXE 接成 "<第1参>0" → 备份被静默跳过）
-//   · shift 接第 10 参 —— 曾被误判为「脚本静默死亡」，2x2 矩阵探针
-//     （shift × 结尾 CRLF，32 轮真实 e2e）已证伪：shift 无辜，当年的
-//     死亡是探针自身缺陷（删除临时目录后才断言、日志读错路径）。
-// 因此 nodeExe 由 buildApplyScript 直接内联进脚本（% 转义为 %%），
-// 不经命令行参数传递 —— 内联无参数位数限制，是最稳方案。
+// nodeExe 正好是批处理第 9 参，可用 %~9 安全读取；不能改成第 10 参，
+// 因为 `%~10` 会被解析为 `%~1`+`0`。路径不能直接写进 ASCII/OEM 批处理，
+// 否则安装目录含中文时会被 cmd.exe 破坏。
 //
 // 本文件在 require('../client-updater.js') 之前拦截 child_process.spawn；
 // node --test 每个文件独立进程，不会影响其他测试文件拿到真实的 spawn。
@@ -36,7 +31,7 @@ cp.spawn = function interceptedSpawn(cmd, args, opts) {
 
 const clientUpdater = require('../client-updater.js');
 
-test('applyUpdate inlines the bundled node exe into the script body', { skip: process.platform !== 'win32' }, () => {
+test('applyUpdate passes the bundled node exe through PowerShell as the ninth batch argument', { skip: process.platform !== 'win32' }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-node-arg-'));
   // 生产环境中 updates/ 由下载器创建（Setup 就躺在里面）；applyUpdate 只写文件不建目录
   fs.mkdirSync(path.join(dir, 'updates'), { recursive: true });
@@ -64,12 +59,12 @@ test('applyUpdate inlines the bundled node exe into the script body', { skip: pr
       last.args[last.args.indexOf('-ActionScriptPath') + 1],
       path.join(dir, 'updates', 'apply-update.cmd')
     );
-    // 写盘的脚本必须内联 node 路径（% 转义 %%），且不得依赖 PATH node，
-    // 也不得用 %~10 / shift 接参数（两条均已实测会坏）。
+    assert.equal(last.args[last.args.indexOf('-NodeExePath') + 1], nodeExe);
+    // 写盘脚本只读取第 9 参，不直接嵌入可能含非 ASCII 字符的绝对路径。
     const scriptText = fs.readFileSync(path.join(dir, 'updates', 'apply-update.cmd'), 'utf8');
-    const escaped = nodeExe.replace(/%/g, '%%');
-    assert.ok(scriptText.includes(`set "NODEEXE=${escaped}"`),
-      'script must inline the bundled node exe path');
+    assert.ok(scriptText.includes('set "NODEEXE=%~9"'),
+      'script must read the bundled node exe from the ninth argument');
+    assert.ok(!scriptText.includes(nodeExe), 'script must not embed the Unicode-sensitive absolute path');
     assert.ok(scriptText.includes('"%NODEEXE%" -e'), 'manifest step must use the passed node exe');
     assert.doesNotMatch(scriptText, /%~10/, 'must never reference %~10');
     assert.doesNotMatch(scriptText, /^\s*shift\s*$/m, 'must not rely on shift');

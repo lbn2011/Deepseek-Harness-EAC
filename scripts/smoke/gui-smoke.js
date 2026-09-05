@@ -1,6 +1,7 @@
 'use strict';
-// P2 GUI 冒烟（一次性）：真实启动 Tauri 壳 → CDP 断言桥与 chrome → 浮窗
-// （硬门槛① per-webview data_directory）→ 菜单退出 → 零孤儿进程。
+// P2 GUI 冒烟（一次性）：在临时 DSH_HOME、用户主目录与应用数据目录中
+// 真实启动 Tauri 壳 → CDP 断言桥与 chrome → 浮窗（硬门槛① per-webview
+// data_directory）→ 菜单退出 → 零孤儿进程。
 // WebView2 经 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 开 CDP 端口。
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -100,8 +101,7 @@ const alivePids = (pids) => pids.length === 0 ? Promise.resolve('') : new Promis
   console.log('[gui-smoke] launching shell with DSH_HOME=' + tmpHome);
   const shell = spawn(EXE, [], {
     env: {
-      ...process.env,
-      DSH_HOME: tmpHome,
+      ...isolatedEnv,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -112,7 +112,15 @@ const alivePids = (pids) => pids.length === 0 ? Promise.resolve('') : new Promis
 
   try {
     // 1) 主窗 target 出现且导航到真实 Web UI（非 /loading）
-    const main = await waitForTarget((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(t.url) && !t.url.includes(`:${CDP_PORT}`), 180000);
+    const main = await waitForTarget((t) => {
+      try {
+        const url = new URL(t.url);
+        return t.type === 'page' && url.hostname === '127.0.0.1'
+          && url.pathname === '/' && Number(url.port) !== CDP_PORT;
+      } catch {
+        return false;
+      }
+    }, 45000);
     const c = cdp(main.webSocketDebuggerUrl);
     await c.ready;
     check('主窗导航到真实 Web UI', true, main.url);
@@ -177,6 +185,17 @@ const alivePids = (pids) => pids.length === 0 ? Promise.resolve('') : new Promis
     // 5e) P3：插件管理列表（pluginManagerCollect）
     const plist = await c.evalJs('window.dshDesktop.pluginManager.list()');
     check('pluginManager.list（配套插件清单）', !!(plist && Array.isArray(plist.list) && plist.list.length >= 20), 'count=' + (plist && plist.list && plist.list.length));
+    const islandRegistered = !!(plist && Array.isArray(plist.list)
+      && plist.list.some((plugin) => plugin && plugin.id === 'composer-dynamic-island'));
+    check('输入灵动岛已登记到 web-desktop profile', islandRegistered);
+    const islandVisible = await c.evalJs(`new Promise(function(res) {
+      var t = setTimeout(function() { res(false); }, 20000);
+      (function chk() {
+        if (document.querySelector('[data-dsh-island-trigger]')) { clearTimeout(t); res(true); }
+        else setTimeout(chk, 250);
+      })();
+    })`);
+    check('输入灵动岛触发器已挂载到 composer', islandVisible === true);
 
     // 5f) P3：救援链（硬门槛②）—— rescue.getState / guard status
     const rs = await c.evalJs('window.dshDesktop.rescue.getState()');

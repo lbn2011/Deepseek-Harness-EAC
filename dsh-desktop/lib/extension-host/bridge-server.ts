@@ -57,6 +57,10 @@ export async function startExtensionBridgeServer(manager: ExtensionHostManager):
     token,
     close(): void {
       server.close();
+      // keep-alive 连接会拖住 close 回调，优雅关闭必须同时断连接。
+      if (typeof (server as unknown as { closeAllConnections?: () => void }).closeAllConnections === 'function') {
+        (server as unknown as { closeAllConnections: () => void }).closeAllConnections();
+      }
     },
   };
 }
@@ -110,7 +114,10 @@ async function handle(
       return;
     }
     const body = await readBody(req);
-    switch (req.url) {
+    // 按 pathname 分流：5.3.2 及以前 switch (req.url) 精确匹配，
+    // /tools?x=1 这类带 query 的请求直接 404。
+    const routePath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    switch (routePath) {
       case '/tools': {
         json(res, 200, { ok: true, tools: manager.allToolMetas() });
         return;

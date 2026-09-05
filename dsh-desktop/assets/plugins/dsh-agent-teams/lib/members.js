@@ -4,19 +4,19 @@
  *
  * Members are durable continuable subagents of the captain, so a member keeps
  * its conversation across turns and across harness restarts: the captain
- * wakes it with {@link ctx.subagents.followup}, it works through its turn
- * (updating team state through the `agent_teams_*` tools), and becomes idle
- * again. Its final assistant message is not readable programmatically, so the
- * member persists its report into the captain's mailbox and the task records,
- * which the captain reads through `agent_teams_status`.
+ * wakes it with {@link ctx.subagents.sendMessage}（0.1.3 起取代 followup）,
+ * it works through its turn (updating team state through the
+ * `agent_teams_*` tools), and becomes idle again. Its final assistant message
+ * is not readable programmatically, so the member persists its report into
+ * the captain's mailbox and the task records, which the captain reads
+ * through `agent_teams_status`.
  * @module dsh-agent-teams/members
  */
-import { installModelSelection } from '@deepseek-ai/dsh-agent';
 // Declaration merge only: makes ctx.subagents visible.
-import { foldSubagentDescriptor, SubagentError } from '@deepseek-ai/dsh-subagent';
+import { SubagentError } from '@deepseek-ai/dsh-subagent';
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import { join } from 'node:path';
-import { readRetiredMemberIds, readTeamSync } from "./state.js";
+import { readRetiredMemberIds } from "./state.js";
 /** Captain-only AgentTeams tools hidden from newly spawned members. */
 const MEMBER_DENIED_TOOLS = [
     'agent_teams_create',
@@ -38,29 +38,6 @@ function brandedSessionId(value) {
 const MEMBER_LABEL_PREFIX = 'agent-teams:';
 function pendingSelectionKey(parentSessionId, label) {
     return `${parentSessionId}\u0000${label}`;
-}
-function selectionFromMember(member) {
-    if (member?.provider === undefined || member.model === undefined)
-        return undefined;
-    const provider = member.provider.trim();
-    const model = member.model.trim();
-    if (provider === '' || model === '')
-        return undefined;
-    const reasoningEffort = member.reasoningEffort?.trim();
-    return {
-        provider,
-        model,
-        ...reasoningEffort === undefined || reasoningEffort === '' ? {} : { reasoningEffort },
-    };
-}
-function modelSelection(selection) {
-    return {
-        provider: selection.provider,
-        model: selection.model,
-        ...selection.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) },
-    };
 }
 /**
  * Resolve one member's complete model selection. Ordinary members snapshot the
@@ -127,53 +104,23 @@ export async function resolveMemberLlmSelection(ctx, captain, request, signal) {
     };
 }
 /**
- * Install the member selection bridge for every fresh or cold-resumed
- * continuable child. Fresh creation reads the pending in-memory selection;
- * cold resume restores the same selection from the owning team's durable
- * record. Legacy members without a complete saved route retain Harness's
+ * Install the member selection bridge for fresh continuable children.
+ * 内核 0.1.3：SubagentService.registerContinuableSetup 被移除 —— 生命周期由
+ * SessionHandle/continuation manager 接管。路由还原拆成两半：
+ *   · 新建成员：spawnMember 已把 agentOptions {provider, model,
+ *     reasoningEffort} 随 startContinuable 请求直传（0.1.3 的
+ *     resolveChildAgentOptions 原生合并），无需 per-child 钩子；
+ *   · 冷恢复成员：路由持久化在 subagent descriptor 里，内核
+ *     parentAgentOptionsForDelegation/applyChildComposition 原生恢复
+ *     （spawnMember 的 descriptor 一致性检查仍由
+ *     withPending 内的一致校验承担）。
+ * 本函数降级为「pending 路由表」持有者：withPending 语义不变（新建时
+ * 校验 route 一致、结束后清理），不再向内核登记任何 setup 回调。
+ * Legacy members without a complete saved route retain Harness's
  * descriptor provider/model behavior.
  */
 export function installMemberSelectionRuntime(ctx, stateDir) {
     const pending = new Map();
-    ctx.subagents.registerContinuableSetup((childCtx) => {
-        const child = childCtx.agent;
-        if (child === undefined)
-            return () => undefined;
-        const suffix = child.session.events.slice(child.session.header.seedLength ?? 0);
-        const descriptor = foldSubagentDescriptor(suffix);
-        if (descriptor?.mode !== 'continuable' || !descriptor.label.startsWith(MEMBER_LABEL_PREFIX)) {
-            return () => undefined;
-        }
-        const parentSessionId = child.session.header.parentSession;
-        if (parentSessionId === undefined)
-            return () => undefined;
-        const key = pendingSelectionKey(parentSessionId, descriptor.label);
-        let selection = pending.get(key);
-        if (selection === undefined) {
-            const identity = descriptor.label.slice(MEMBER_LABEL_PREFIX.length);
-            const separator = identity.indexOf(':');
-            if (separator < 1 || separator === identity.length - 1)
-                return () => undefined;
-            const teamId = identity.slice(0, separator);
-            const memberName = identity.slice(separator + 1);
-            const workspace = child.session.header.cwd ?? process.cwd();
-            const team = readTeamSync(join(workspace, stateDir), teamId);
-            if (team?.captainSessionId !== parentSessionId)
-                return () => undefined;
-            selection = selectionFromMember(team.members.find(member => member.name === memberName));
-            // An old team record has no provider/reasoning snapshot. Its durable
-            // Harness descriptor still restores provider/model, so leave it alone.
-            if (selection === undefined)
-                return () => undefined;
-            if (descriptor.agentProvider !== selection.provider || descriptor.agentModel !== selection.model) {
-                throw new Error(`agent-teams: saved model route for member "${memberName}" does not match its subagent descriptor`);
-            }
-        }
-        return installModelSelection(childCtx, {
-            current: modelSelection(selection),
-            assembled: undefined,
-        });
-    });
     return {
         async withPending(parentSessionId, label, selection, operation) {
             const key = pendingSelectionKey(parentSessionId, label);
@@ -292,14 +239,18 @@ export async function spawnMember(ctx, config, selections, llmSelection, captain
  */
 export async function deliverToMember(ctx, captain, childId, text, signal) {
     try {
-        await ctx.subagents.followup(captain, brandedSessionId(childId), [{ type: 'text', text }], {
-            source: { kind: 'plugin', plugin: 'dsh-agent-teams' },
+        // 内核 0.1.3：SubagentService.followup(parent,…) 已被 sendMessage(sender,…)
+        // 取代 —— 发送方改为 captain Agent 本身（而非「以 captain 之名投递」），
+        // options 只收 {signal}（source 归因内置为发送方 Agent，不再接受
+        // host-provenance 字段）。投递语义不变：运行中成员在最近步边界
+        // steer，空闲成员开新轮。
+        await ctx.subagents.sendMessage(captain, brandedSessionId(childId), [{ type: 'text', text }], {
             signal,
         });
         return true;
     }
     catch (error) {
-        ctx.logger.warn(`agent-teams: followup to member ${childId} failed: ${String(error)}`);
+        ctx.logger.warn(`agent-teams: sendMessage to member ${childId} failed: ${String(error)}`);
         return false;
     }
 }
@@ -323,28 +274,32 @@ export function interruptMember(ctx, captain, childId) {
  *
  * Upstream `interrupt()` deliberately preserves continuable sessions and the
  * upstream seam exposes no targeted forget/retire method. The durable
- * AgentTeams index therefore rejects `followup()` before it can cold-resume a
- * retired member. Catalog rows deliberately remain discoverable: Harness rc.8
+ * AgentTeams index therefore rejects member delivery before it can cold-resume
+ * a retired member. Catalog rows deliberately remain discoverable: Harness rc.8
  * uses the direct-child catalog to authorize historical transcript reads and
  * `openSubagent()`, so filtering those rows would make an archived member's
  * persisted conversation inaccessible. Exact ids keep unrelated subagents
- * untouched while the followup boundary still prevents further model turns.
+ * untouched while the delivery boundary still prevents further model turns.
  */
 export function installRetiredMemberGuard(ctx, stateDir) {
     const runtime = ctx.subagents;
     ctx.effect(() => {
-        const followup = runtime.followup;
-        const guardedFollowup = async (parent, childId, content, options) => {
-            const retired = await readRetiredMemberIds(join(parent.session.header.cwd ?? process.cwd(), stateDir));
-            if (retired.has(childId)) {
-                throw new SubagentError(`AgentTeams member "${childId}" was retired and cannot be resumed`, 'NOT_RESUMABLE');
+        // 内核 0.1.3：guard 锚点从 followup(parent,…) 迁到 sendMessage(sender,…)。
+        // 成员会话的 cwd 记录在 sender 的 session header 里不可靠（sendMessage
+        // 的 sender 是 captain），retired 名册按 team stateDir 读取（调用方
+        // 传入的 stateDir 即 team 目录）。
+        const sendMessage = runtime.sendMessage;
+        const guardedSend = async (sender, targetId, content, options) => {
+            const retired = await readRetiredMemberIds(join(sender.session.header.cwd ?? process.cwd(), stateDir));
+            if (retired.has(targetId)) {
+                throw new SubagentError(`AgentTeams member "${targetId}" was retired and cannot be resumed`, 'NOT_RESUMABLE');
             }
-            return followup.call(runtime, parent, childId, content, options);
+            return sendMessage.call(runtime, sender, targetId, content, options);
         };
-        runtime.followup = guardedFollowup;
+        runtime.sendMessage = guardedSend;
         return () => {
-            if (runtime.followup === guardedFollowup)
-                runtime.followup = followup;
+            if (runtime.sendMessage === guardedSend)
+                runtime.sendMessage = sendMessage;
         };
     }, 'agent-teams: retired member guard');
 }

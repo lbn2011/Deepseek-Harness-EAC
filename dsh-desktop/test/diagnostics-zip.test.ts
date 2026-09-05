@@ -33,9 +33,12 @@ function setupFakeHome() {
   const logsDir    = path.join(fake, 'logs');
   const userData   = path.join(fake, 'userData');
   const dshHome    = path.join(fake, 'dshHome');
-  const profileDir = path.join(userData, 'profiles', 'web-desktop');
+  // 5.3.3：profile 根是 dshHome（profile.ts/updater 快照均以 home 为根；
+  // 5.3.2 及以前 logger 误用 userDataDir 导致诊断包静默缺 cordis.patch.yml）。
+  const profileDir = path.join(dshHome, 'profiles', 'web-desktop');
   const backupDir  = path.join(dshHome, 'updater', 'backup', '2025-07-01T00-00-00Z');
   fs.mkdirSync(logsDir, { recursive: true });
+  fs.mkdirSync(userData, { recursive: true });
   fs.mkdirSync(profileDir, { recursive: true });
   fs.mkdirSync(backupDir, { recursive: true });
 
@@ -163,7 +166,7 @@ test('AC-8.2 导出 zip entries 齐全且排除大备份归档', { timeout: 9000
   // --- configs ---
   assert.ok(find('config/settings.json'), `缺失 config/settings.json`);
   assert.ok(find('config/dsh-settings.yaml'), `缺失 config/dsh-settings.yaml`);
-  assert.ok(find('config/profile/cordis.patch.yml'), `缺失 config/profile/cordis.patch.yml`);
+  assert.ok(find('config/profile/web-desktop/cordis.patch.yml'), `缺失 config/profile/web-desktop/cordis.patch.yml`);
 
   // --- updater ---
   assert.ok(find('updater/pending-client-update-v4.3.0.json'), `缺失 updater pending update meta`);

@@ -483,7 +483,6 @@ $smokeScripts = @(
     'boot-smoke.js',
     'gui-smoke.js',
     'update-smoke.js',
-    'upgrade-test-441.js',
     'tauri-shell\stage-resources.mjs',
     'tauri-shell\make-portable.mjs'
 )

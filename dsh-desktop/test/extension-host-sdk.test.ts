@@ -254,6 +254,11 @@ test('Core Bridge cordis 组件：mock ctx 经真实 HTTP 桥接工具与上下�
       on(event, cb) {
         if (event === 'session/created') sessionHandlers.push(cb);
       },
+      // cordis effect 语义：执行并收集 disposer（测试结束统一处置 → 清 interval）。
+      effect(fn) {
+        const dispose = fn();
+        if (typeof dispose === 'function') mockCtx._disposers.push(dispose);
+      },
       get() {
         return {
           get() {
@@ -262,6 +267,7 @@ test('Core Bridge cordis 组件：mock ctx 经真实 HTTP 桥接工具与上下�
         };
       },
       _assemble: null,
+      _disposers: [],
     };
 
     const bridgePlugin = await import(bridgePluginUrl('with-endpoint'));
@@ -285,6 +291,8 @@ test('Core Bridge cordis 组件：mock ctx 经真实 HTTP 桥接工具与上下�
     assert.equal(enriched.contexts[0].name, 'core', '核心段在前');
     assert.match(enriched.contexts[1].text, /sample-sdk-plugin/);
   } finally {
+    // 处置 effect 收集的 disposer（interval teardown），防测试进程内泄漏。
+    for (const d of (typeof mockCtx !== 'undefined' ? mockCtx._disposers : [])) { try { d(); } catch { /* noop */ } }
     delete process.env.DSH_EAC_BRIDGE_URL;
     delete process.env.DSH_EAC_BRIDGE_TOKEN;
     bridge.close();

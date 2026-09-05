@@ -1,7 +1,8 @@
 // Host-side entry for dsh-conversation-tweaks:
 // registers the durable settings namespace used by the General-settings row.
 import z from "@deepseek-ai/schemastery";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+// 0.1.3：dsh-settings 移除两个独立导出 —— 改走共享兼容垫片（行为逐行一致）。
+import { installSettingsSection, settingsNamespace } from "./settings-compat.js";
 
 const name = "@deepseek-ai/dsh-conversation-tweaks";
 const inject = ["settings"];

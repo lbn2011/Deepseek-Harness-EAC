@@ -12,9 +12,39 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { resolvePersonaPath, buildMigrationPrompt } from '../assets/plugins/dsh-easy-setup/lib/logic.js';
 
 const HOME = 'C:/Users/tester/.dsh';
+const PLUGIN_DIR = join(import.meta.dirname, '..', 'assets', 'plugins', 'dsh-easy-setup', 'lib');
+
+test('persona card remote methods are declared by both host and client', () => {
+  const host = readFileSync(join(PLUGIN_DIR, 'index.js'), 'utf8');
+  const client = readFileSync(join(PLUGIN_DIR, 'client.js'), 'utf8');
+  const methods = [
+    ['readPersona', '[]'],
+    ['writePersona', '["content"]'],
+    ['migrationPrompt', '[]'],
+    ['listCards', '[]'],
+    ['saveCard', '["name", "content"]'],
+    ['deleteCard', '["name"]'],
+  ];
+
+  for (const [method, parameters] of methods) {
+    const declaration = `descriptor("${method}", ${parameters})`;
+    assert.ok(host.includes(declaration), `host missing ${method}`);
+    assert.ok(client.includes(declaration), `client missing ${method}`);
+  }
+});
+
+test('persona card apply feedback keeps the full card name and library spacing', () => {
+  const client = readFileSync(join(PLUGIN_DIR, 'client.js'), 'utf8');
+  assert.ok(client.includes('busy.slice("saved:".length)'), 'card name must not lose its first character');
+  assert.ok(client.includes('className: "__es_cardLibrary"'), 'custom cards need a dedicated layout group');
+  assert.match(client, /\.__es_cardLibrary\{[^}]*gap:8px[^}]*margin:4px 0 8px/);
+  assert.match(client, /\.__es_cardLibrary \.__es_cards\{gap:10px\}/);
+});
 
 // ── persona path resolution ─────────────────────────────────────────────
 

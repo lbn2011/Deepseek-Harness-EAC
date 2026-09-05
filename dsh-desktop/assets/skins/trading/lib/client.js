@@ -792,16 +792,16 @@ window.__ModuleLoader__.load({
 				renderIndexCells(fallback);
 			};
 			/** Workspace-count cell: how many workspaces the terminal is watching.
-			*  Live data rides the workspace.list RPC when the connection handle is
-			*  available; failures degrade to the dash — the stock chrome must never
-			*  crash the terminal. */
+			*  Live data rides the workspaces service snapshot (内核 0.1.2 起
+			*  connection.api 门面已移除，workspace.list unary 也不存在)；服务不可用
+			*  时降级为短横 — the stock chrome must never crash the terminal. */
 			const refreshWorkspaces = async () => {
-				if (connection === void 0 || disposed) return;
+				if (disposed) return;
 				try {
-					const list = await connection.api.workspace.list({});
-					if (!list.result.ok) return;
+					const workspaces = ctx.get("workspaces");
+					if (workspaces === void 0) return;
+					const count = workspaces.list.getSnapshot().items.length;
 					if (disposed) return;
-					const count = list.result.value.items.length;
 					codeIndexCell.textContent = `工作区 ${count}`;
 				} catch {
 					codeIndexCell.textContent = "工作区 --";

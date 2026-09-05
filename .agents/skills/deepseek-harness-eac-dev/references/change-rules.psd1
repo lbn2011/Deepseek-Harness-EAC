@@ -133,6 +133,18 @@
             Smoke = @()
         },
         @{
+            Name = 'plugin-copy'
+            Domain = 'plugins'
+            Pattern = '^dsh-desktop/lib/plugin-copy\.(ts|js)$'
+            Reference = 'references/dsh-plugins.md'
+            Level = 'full'
+            Tests = @(
+                'test/companion-copy-integrity.test.ts',
+                'test/plugin-copy-stamp.test.ts'
+            )
+            Smoke = @()
+        },
+        @{
             Name = 'plugin-ops'
             Domain = 'plugins'
             Pattern = 'plugin-ops\.(ts|js)$|plugin-manager-state|scripts/onboarding|scripts/plugin-manager-patch'
@@ -157,6 +169,19 @@
                 'test/companion-copy-integrity.test.ts',
                 'test/plugin-slot-registration.test.ts',
                 'test/onboarding-selection.test.ts'
+            )
+            Smoke = @('node tauri-shell/stage-resources.mjs')
+        },
+        @{
+            Name = 'desktop-package-manifest'
+            Domain = 'updates-packaging'
+            Pattern = '^dsh-desktop/package\.json$'
+            Reference = 'references/updates-and-packaging.md'
+            Level = 'package'
+            Tests = @(
+                'test/bundled-files.test.ts',
+                'test/raw-html-integration.test.ts',
+                'test/raw-html-sanitize.test.ts'
             )
             Smoke = @('node tauri-shell/stage-resources.mjs')
         },
@@ -237,14 +262,13 @@
         @{
             Name = 'runtime-utilities'
             Domain = 'product-services'
-            Pattern = 'stable-port|stream-write-guard|koffi-preflight|error-detail|builtin-collision|bundle-integrity'
+            Pattern = 'stable-port|stream-write-guard|koffi-preflight|builtin-collision|bundle-integrity'
             Reference = 'references/product-services.md'
             Level = 'full'
             Tests = @(
                 'test/stable-port.test.ts',
                 'test/stream-write-after-end.test.ts',
                 'test/koffi-preflight.test.ts',
-                'test/error-detail.test.ts',
                 'test/builtin-collision.test.ts',
                 'test/bundle-integrity.test.ts'
             )
@@ -263,11 +287,9 @@
                 'test/logger-rotate.test.ts',
                 'test/plugin-guard.test.ts',
                 'test/recovery-integration.test.ts',
-                'test/renderer-recovery.test.ts',
                 'test/rescue-agent.test.ts',
                 'test/rescue-auto-repair.test.ts',
-                'test/rescue-integration.test.ts',
-                'test/watchdog-behavior.test.ts'
+                'test/rescue-integration.test.ts'
             )
             Smoke = @()
         },
@@ -285,7 +307,7 @@
                 'test/installer-takeover.test.ts',
                 'test/verify-dist-fresh.test.ts'
             )
-            Smoke = @('node update-smoke.js', 'node upgrade-test-441.js')
+            Smoke = @('node update-smoke.js')
         },
         @{
             Name = 'electron-fallback'
@@ -296,7 +318,6 @@
             Tests = @(
                 'test/bridge-preload-parity.test.ts',
                 'test/bundled-files.test.ts',
-                'test/context-menu.test.ts',
                 'test/desktop-extras.test.ts'
             )
             Smoke = @()

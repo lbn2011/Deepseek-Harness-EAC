@@ -46,6 +46,8 @@ window.__ModuleLoader__.load({
       ".__es_details summary{cursor:pointer;color:var(--dsw-alias-label-secondary)}" +
       ".__es_prompt{white-space:pre-wrap;font-family:var(--dsw-alias-font-mono,monospace);font-size:11px;line-height:1.5;max-height:240px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2)}" +
       ".__es_cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}" +
+      ".__es_cardLibrary{display:flex;flex-direction:column;gap:8px;margin:4px 0 8px}" +
+      ".__es_cardLibrary .__es_cards{gap:10px}" +
       ".__es_card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:8px 10px;background:var(--dsw-alias-bg-layer-3);display:flex;flex-direction:column;gap:4px}" +
       ".__es_cardMine{border-style:dashed}" +
       ".__es_cardname{font-size:13px;font-weight:600}" +
@@ -166,7 +168,10 @@ window.__ModuleLoader__.load({
       descriptors: [
         descriptor("readPersona", []),
         descriptor("writePersona", ["content"]),
-        descriptor("migrationPrompt", [])
+        descriptor("migrationPrompt", []),
+        descriptor("listCards", []),
+        descriptor("saveCard", ["name", "content"]),
+        descriptor("deleteCard", ["name"])
       ]
     };
 
@@ -445,7 +450,7 @@ window.__ModuleLoader__.load({
             );
           })
         ),
-        cards.length ? h("div", null,
+        cards.length ? h("div", { className: "__es_cardLibrary" },
           h("div", { className: "__es_label" }, t("myCards")),
           h("div", { className: "__es_cards" }, cards.map(function (c) {
             return h("div", { className: "__es_card __es_cardMine", key: c.file },
@@ -477,7 +482,7 @@ window.__ModuleLoader__.load({
           h("button", { className: "__es_btn __es_btnPrimary", disabled: busy === "saving" || braces || draft === data.content, onClick: onSave }, busy === "saving" ? t("saving") : t("save")),
           braces ? h("span", { className: "__es_error" }, t("personaBraceWarn")) : null,
           busy === "saved" ? h("span", { className: "__es_ok" }, t("saved")) : null,
-          typeof busy === "string" && busy.indexOf("saved:") === 0 ? h("span", { className: "__es_ok" }, t("cardApplied") + "：" + busy.slice(7)) : null,
+          typeof busy === "string" && busy.indexOf("saved:") === 0 ? h("span", { className: "__es_ok" }, t("cardApplied") + "：" + busy.slice("saved:".length)) : null,
           typeof busy === "string" && busy.indexOf("error:") === 0 ? h("span", { className: "__es_error" }, t("saveFail") + ": " + busy.slice(6)) : null
         ),
         h("div", { className: "__es_actions" },

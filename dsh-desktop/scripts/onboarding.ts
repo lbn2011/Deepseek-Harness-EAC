@@ -27,6 +27,7 @@ export const CORE_PLUGIN_IDS = new Set([
   'plugin-manager',
   'plugin-shield',
   'plugin-wizard',
+  'eac-locale-compat',
   // EAC 内置 agent preset 直接引用 dsh-compact/engine；允许移除会让这些
   // preset 在创建会话时因 MODULE_NOT_FOUND 失效（main 侧 e171abc 前置修复）。
   'compact',
@@ -41,6 +42,7 @@ export const RECOMMENDED_PLUGIN_IDS = new Set([
   'soul-md',
   'mobile-fix',
   'better-sidebar',
+  'composer-dynamic-island',
   'message-rewind',
   'dock-settings',
   'change-review',
@@ -49,6 +51,8 @@ export const RECOMMENDED_PLUGIN_IDS = new Set([
   'conversation-tweaks',
   'prompt-custom',
   'offpeak',
+  // VCP 视觉通感协议（dsh-raw-html）：消息 HTML 渲染为界面，默认勾选。
+  'dsh-raw-html',
 ]);
 
 /** 向导判定输入（文件存在性由调用方探明，保证纯函数可测）。 */

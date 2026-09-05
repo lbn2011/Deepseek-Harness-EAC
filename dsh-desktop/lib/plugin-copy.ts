@@ -26,18 +26,21 @@ import * as path from 'node:path';
 /** 随插件/皮肤包一起拷贝的许可与出处文件（存在才拷贝）。 */
 export const EXTRA_PACKAGE_FILES = [
   'LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md',
-  'README.md', 'README.zh.md', 'THIRD-PARTY-NOTICES.md',
+  'README.md', 'README.zh.md', 'README.zh-CN.md', 'THIRD-PARTY-NOTICES.md',
 ];
 
 export const COPY_STAMP = '.eac-copy-stamp.json';
 
 // 顶层候选文件与目录（拷贝清单；多算/漏算只影响戳记稳定性，不会拷错内容：
 // 目录不存在时走树器直接跳过）。与旧实现清单逐项一致。
+// 附加项：dsh-raw-html 运行时知识层（美学风格库 styles/ + 设计文档）由
+// lib/index.js 从插件目录读取，必须随内置分发拷贝；仅存在时生效。
 const TOP_FILES = [
-  'package.json', 'skin.json', ...EXTRA_PACKAGE_FILES,
-  'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml',
+  'package.json', 'dsh-plugin.json', 'skin.json', ...EXTRA_PACKAGE_FILES,
+  'EAC-ADAPTATION.md', 'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml',
+  'DESIGN.md', 'FRAMING.md', 'EDITORIAL.md', 'BREATH.md',
 ];
-const TOP_DIRS = ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client'];
+const TOP_DIRS = ['lib', 'docs', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client', 'styles'];
 
 /** 安全读 JSON（损坏/缺失返回 null）。 */
 export function readJsonFile(file: string): Record<string, unknown> | null {

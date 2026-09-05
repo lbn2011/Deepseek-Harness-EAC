@@ -88,6 +88,123 @@ const CONN_FACADE_ANCHOR = 'archiveSession: (payload, signal) => this.callUnary(
 const CONN_FACADE_INSERT = 'archiveSession: (payload, signal) => this.callUnary("workspace.archiveSession", payload, signal),\n\t\t\t\tunarchiveSession: (payload, signal) => this.callUnary("workspace.unarchiveSession", payload, signal),\n\t\t\t\tdeleteSession: (payload, signal) => this.callUnary("workspace.deleteSession", payload, signal)';
 
 // ---------------------------------------------------------------------------
+// 5.（内核 0.1.2-alpha.1+）RPC 面换血后的落点：dsh-host-apiproxy 已移除
+//    （迁移为 typert Remote 服务）。宿主 RPC 挂 dsh-api-workspace-controller
+//    （类方法 + Remote 装饰器 + typert.host 注册表），客户端 facade 挂其
+//    lib/client.js 两层（model + command），api-remotes/lib/client.js 持有
+//    客户端 schema 注册表。锚点为 0.1.2 产物形态；未命中只告警不损坏。
+// ---------------------------------------------------------------------------
+// 5a-0. controller 类注入声明（sessions/sessionPersistence —— 删除链路用；
+// commands/feed 属性实例与 controller 共享同一 ctx，注入声明必须挂在真正
+// 挂载的 controller 类上，锚 = 其 typert+workspaceRegistry 行）。
+const CTRL_INJECT_ANCHOR = 'static inject = ["typert", "workspaceRegistry"];';
+const CTRL_INJECT_INSERT = 'static inject = ["typert", "workspaceRegistry", "sessions", "sessionPersistence"];';
+
+// 5a-1. commands 类业务实现（锚：commands 版 archiveSession 方法整体——
+// 它与 controller 版的区别是 async + try/registry 直调。锚点取方法头到
+// requireWorkspace 后继，只在 commands 类出现）。
+const CTRL_METHOD_ANCHOR = 'async archiveSession(request) {\n\t\ttry {\n\t\t\tawait this.ctx.workspaceRegistry.archiveSession(request.sessionId);\n\t\t} catch (error) {\n\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t\tthrow failure("session-not-found", error.message, { sessionId: request.sessionId });\n\t\t}\n\t\treturn { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] };\n\t}\n\trequireWorkspace(workspaceId) {';
+const CTRL_METHOD_INSERT = 'async archiveSession(request) {\n\t\ttry {\n\t\t\tawait this.ctx.workspaceRegistry.archiveSession(request.sessionId);\n\t\t} catch (error) {\n\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t\tthrow failure("session-not-found", error.message, { sessionId: request.sessionId });\n\t\t}\n\t\treturn { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] };\n\t}\n\t/**\n\t* dsh-desktop patch (session manage): 恢复归档（幂等移出归档集合）。\n\t*/\n\tasync unarchiveSession(request) {\n\t\ttry {\n\t\t\tawait this.ctx.workspaceRegistry.unarchiveSession(request.sessionId);\n\t\t} catch (error) {\n\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t\tthrow failure("session-not-found", error.message, { sessionId: request.sessionId });\n\t\t}\n\t\treturn { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] };\n\t}\n\t/**\n\t* dsh-desktop patch (session manage): 删除会话（拒绝运行中 → 移除目录 →\n\t* 摘除 live 注册表 → 清理归档集合）。目录布局复刻 dsh-session-persistence-\n\t* jsonl 约定。\n\t*/\n\tasync deleteSession(request) {\n\t\tconst { sessionId } = request;\n\t\tif (dshDesktopSessionRunning.get(sessionId) === true) {\n\t\t\tthrow failure("session-running", "cannot delete a running session: stop it first", { sessionId });\n\t\t}\n\t\tconst rm = (await import("node:fs/promises")).rm;\n\t\tconst join = (await import("node:path")).join;\n\t\ttry {\n\t\t\tconst headers = await this.ctx.get("sessionPersistence").list();\n\t\t\tconst header = headers.find((entry) => entry && entry.id === sessionId);\n\t\t\tif (header !== void 0) {\n\t\t\t\tconst encodeSeg = (raw) => {\n\t\t\t\t\tif (raw === ".") return "~002E";\n\t\t\t\t\tif (raw === "..") return "~002E~002E";\n\t\t\t\t\tlet out = "";\n\t\t\t\t\tfor (let i = 0; i < raw.length; i++) {\n\t\t\t\t\t\tconst code = raw.charCodeAt(i);\n\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\tif (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) out += ch;\n\t\t\t\t\t\telse out += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t}\n\t\t\t\t\treturn out;\n\t\t\t\t};\n\t\t\t\tconst projectKeyOf = (cwd) => {\n\t\t\t\t\tlet readable = "";\n\t\t\t\t\tlet separatorRun = false;\n\t\t\t\t\tfor (let i = 0; i < cwd.length; i++) {\n\t\t\t\t\t\tconst code = cwd.charCodeAt(i);\n\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\tif (ch === "/" || ch === "\\\\" || ch === ":") {\n\t\t\t\t\t\t\tif (!separatorRun) readable += "-";\n\t\t\t\t\t\t\tseparatorRun = true;\n\t\t\t\t\t\t\t} else if (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) {\n\t\t\t\t\t\t\t\treadable += ch;\n\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\t\treadable += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\treturn `--${(readable.replace(/^-+/, "") || "root").slice(0, 251)}--`;\n\t\t\t\t};\n\t\t\t\tconst { dshHomePath } = await import("@deepseek-ai/dsh-home-paths");\n\t\t\t\tconst dir = join(dshHomePath("sessions"), header.cwd === void 0 ? "_no-cwd" : projectKeyOf(header.cwd), encodeSeg(sessionId));\n\t\t\t\tawait rm(dir, { recursive: true, force: true });\n\t\t\t}\n\t\t} catch (error) {\n\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t}\n\t\tconst removed = this.ctx.sessions ? this.ctx.sessions.remove(sessionId) : false;\n\t\tif (!removed) this.ctx.emit("session/disposed", { id: sessionId });\n\t\tawait this.ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\treturn { deleted: true };\n\t}\n\trequireWorkspace(workspaceId) {';
+
+// 5a-2. controller 类 Remote 薄代理（锚：controller 版 archiveSession 薄代理
+// + follow 后继）。controller 方法非 async、转发 commands。
+const CTRL_PROXY_ANCHOR = 'archiveSession(request) {\n\t\t\treturn this.commands.archiveSession(request);\n\t\t}\n\t\t/**\n\t\t* Stream a complete Workspace baseline followed by ordered increments.';
+const CTRL_PROXY_INSERT = 'archiveSession(request) {\n\t\t\treturn this.commands.archiveSession(request);\n\t\t}\n\t\t/**\n\t\t* dsh-desktop patch (session manage): 恢复归档。\n\t\t*/\n\t\tunarchiveSession(request) {\n\t\t\treturn this.commands.unarchiveSession(request);\n\t\t}\n\t\t/**\n\t\t* dsh-desktop patch (session manage): 删除会话。\n\t\t*/\n\t\tdeleteSession(request) {\n\t\t\treturn this.commands.deleteSession(request);\n\t\t}\n\t\t/**\n\t\t* Stream a complete Workspace baseline followed by ordered increments.';
+
+// 5b. 装饰器变量 + __esDecorate 注册（锚：archiveSession 的两处形态）。
+const CTRL_DECORATOR_ANCHOR = '_archiveSession_decorators = [Remote("archiveSession")];';
+const CTRL_DECORATOR_INSERT = '_archiveSession_decorators = [Remote("archiveSession")];\n\t\t\tlet _unarchiveSession_decorators = [Remote("unarchiveSession")];\n\t\t\tlet _deleteSession_decorators = [Remote("deleteSession")];';
+
+const CTRL_ESDECORATE_ANCHOR = 'name: "archiveSession",\n\t\t\t\tstatic: false,\n\t\t\t\tprivate: false,\n\t\t\t\taccess: {\n\t\t\t\t\thas: (obj) => "archiveSession" in obj,\n\t\t\t\t\tget: (obj) => obj.archiveSession\n\t\t\t\t},\n\t\t\t\tmetadata: _metadata\n\t\t\t}, null, _instanceExtraInitializers);\n\t\t\t__esDecorate(this, null, _follow_decorators,';
+const CTRL_ESDECORATE_INSERT = 'name: "archiveSession",\n\t\t\t\tstatic: false,\n\t\t\t\tprivate: false,\n\t\t\t\taccess: {\n\t\t\t\t\thas: (obj) => "archiveSession" in obj,\n\t\t\t\t\tget: (obj) => obj.archiveSession\n\t\t\t\t},\n\t\t\t\tmetadata: _metadata\n\t\t\t}, null, _instanceExtraInitializers);\n\t\t\t__esDecorate(this, null, _unarchiveSession_decorators, {\n\t\t\t\tkind: "method",\n\t\t\t\tname: "unarchiveSession",\n\t\t\t\tstatic: false,\n\t\t\t\tprivate: false,\n\t\t\t\taccess: {\n\t\t\t\t\thas: (obj) => "unarchiveSession" in obj,\n\t\t\t\t\tget: (obj) => obj.unarchiveSession\n\t\t\t\t},\n\t\t\t\tmetadata: _metadata\n\t\t\t}, null, _instanceExtraInitializers);\n\t\t\t__esDecorate(this, null, _deleteSession_decorators, {\n\t\t\t\tkind: "method",\n\t\t\t\tname: "deleteSession",\n\t\t\t\tstatic: false,\n\t\t\t\tprivate: false,\n\t\t\t\taccess: {\n\t\t\t\t\thas: (obj) => "deleteSession" in obj,\n\t\t\t\t\tget: (obj) => obj.deleteSession\n\t\t\t\t},\n\t\t\t\tmetadata: _metadata\n\t\t\t}, null, _instanceExtraInitializers);\n\t\t\t__esDecorate(this, null, _follow_decorators,';
+
+// 5b-2. 运行状态映射（锚：controller 首行 import）。
+const CTRL_RUNNING_ANCHOR = 'import { Remote, TypertRemoteFailure, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";';
+const CTRL_RUNNING_INSERT = 'import { Remote, TypertRemoteFailure, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";\n// dsh-desktop patch (session manage): 每会话最近一次 agent 运行状态（删除守卫用）。\nconst dshDesktopSessionRunning = /* @__PURE__ */ new Map();';
+
+// 5b-3. 运行状态同步监听（0.1.2 补位）：rc.2 时代由 dsh-host-apiproxy 的
+// host 流监听 agent/status 维护该 Map，0.1.2 apiproxy 移除后无人写入、
+// 守卫失效（运行中会话可被误删）。挂在 WorkspaceFeed 构造器的 app ctx 上，
+// 与 session controller 的 agent/status 监听同一作用域语义。
+const CTRL_FEED_ANCHOR = 'ctx.on("domain/changed", (change) => {\n\t\t\tthis.changed(change);\n\t\t});';
+const CTRL_FEED_INSERT = 'ctx.on("domain/changed", (change) => {\n\t\t\tthis.changed(change);\n\t\t});\n\t\t\t// dsh-desktop patch (session manage): 同步每会话运行状态（删除守卫；\n\t\t\t// 0.1.2 补位 —— apiproxy 移除后 rc.2 的维护监听随之消失）。\n\t\t\tctx.on("agent/status", ({ agent, status }) => {\n\t\t\t\tif (agent && agent.id) dshDesktopSessionRunning.set(agent.id, status === "running");\n\t\t\t});';
+
+// 5c. typert.host 注册表条目（锚：archiveSession 条目头；insert 复用参数/结果
+// schema 常量 —— unarchive 与 archive 同形，delete 结果 { deleted } 复用
+// WorkspaceArchiveValue 声明（zod 端实际校验宽松：object passthrough 不存在，
+// 多余字段被剥除；deleted:true 会通过）。引号风格单引号。
+const TYPERT_ENTRY_ANCHOR = "id: '@deepseek-ai/dsh-api-workspace-controller#workspace/archiveSession',";
+const TYPERT_ENTRY_INSERT = `id: '@deepseek-ai/dsh-api-workspace-controller#workspace/unarchiveSession',
+      service: 'workspaceController',
+      namespace: 'workspace',
+      method: 'unarchiveSession',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          wire: 'request',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceArchiveSessionRequest',
+            schema: _deepseek_ai_dsh_api_workspace_controller_workspace_archiveSession_parameter_0$schema,
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceArchiveValue',
+        schema: _deepseek_ai_dsh_api_workspace_controller_workspace_deleteSession_result$schema,
+      },
+      sourceLocation: {"file":"packages/api/workspace-controller/src/index.ts","line":1,"column":1},
+    },
+    {
+      id: '@deepseek-ai/dsh-api-workspace-controller#workspace/deleteSession',
+      service: 'workspaceController',
+      namespace: 'workspace',
+      method: 'deleteSession',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          wire: 'request',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceArchiveSessionRequest',
+            schema: _deepseek_ai_dsh_api_workspace_controller_workspace_archiveSession_parameter_0$schema,
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceArchiveValue',
+        schema: _deepseek_ai_dsh_api_workspace_controller_workspace_deleteSession_result$schema,
+      },
+      sourceLocation: {"file":"packages/api/workspace-controller/src/index.ts","line":1,"column":1},
+    },
+    {
+      id: '@deepseek-ai/dsh-api-workspace-controller#workspace/archiveSession',`;
+
+// 5c-2. typert.host 需要的新 zod 常量（delete 结果形态；锚：archiveSession 结果常量行）。
+const TYPERT_SCHEMA_ANCHOR = 'const _deepseek_ai_dsh_api_workspace_controller_workspace_archiveSession_result$schema = z.object({';
+const TYPERT_SCHEMA_INSERT = 'const _deepseek_ai_dsh_api_workspace_controller_workspace_deleteSession_result$schema = z.object({ "deleted": z.boolean().readonly() });\n\t\tconst _deepseek_ai_dsh_api_workspace_controller_workspace_archiveSession_result$schema = z.object({';
+
+// 5d. api-remotes 客户端注册表（锚 = 条目开括号行 + id 行整体，缩进 4/5 tab；
+// 插入体为两个完整条目 + 锚点原文回填）。
+const REMOTES_ENTRY_ANCHOR = '\t\t\t\t{\n\t\t\t\t\tid: "@deepseek-ai/dsh-api-workspace-controller#workspace/archiveSession",';
+const REMOTES_SCHEMA_ANCHOR = 'const _deepseek_ai_dsh_api_workspace_controller_workspace_archiveSession_result$schema = object({';
+const REMOTES_SCHEMA_INSERT = 'const _deepseek_ai_dsh_api_workspace_controller_workspace_deleteSession_result$schema = object({ "deleted": boolean().readonly() });\n\t\tconst _deepseek_ai_dsh_api_workspace_controller_workspace_archiveSession_result$schema = object({';
+
+// 5e. controller 客户端 facade（model 层）。
+const CTRL_CLIENT_MODEL_ANCHOR = 'async archiveSession(sessionId) {\n\t\t\t\tconst result = await this.remote.archiveSession({ sessionId });\n\t\t\t\tif (result.ok) this.installArchived(result.value.archivedSessionIds);\n\t\t\t\treturn result;\n\t\t\t}';
+const CTRL_CLIENT_MODEL_INSERT = 'async archiveSession(sessionId) {\n\t\t\t\tconst result = await this.remote.archiveSession({ sessionId });\n\t\t\t\tif (result.ok) this.installArchived(result.value.archivedSessionIds);\n\t\t\t\treturn result;\n\t\t\t}\n\t\t\t/**\n\t\t\t* dsh-desktop patch (session manage): 恢复归档并落位新归档集。\n\t\t\t*/\n\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tconst result = await this.remote.unarchiveSession({ sessionId });\n\t\t\t\tif (result.ok) this.installArchived(result.value.archivedSessionIds);\n\t\t\t\treturn result;\n\t\t\t}\n\t\t\t/**\n\t\t\t* dsh-desktop patch (session manage): 删除会话（服务端已移目录与注册表）。\n\t\t\t*/\n\t\t\tasync deleteSession(sessionId) {\n\t\t\t\treturn await this.remote.deleteSession({ sessionId });\n\t\t\t}';
+
+// 5f. controller 客户端 facade（command 层）。
+const CTRL_CLIENT_CMD_ANCHOR = 'async archiveSession(sessionId) {\n\t\t\t\tconst result = await this.model.archiveSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session archive", result.error);\n\t\t\t}';
+const CTRL_CLIENT_CMD_INSERT = 'async archiveSession(sessionId) {\n\t\t\t\tconst result = await this.model.archiveSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session archive", result.error);\n\t\t\t}\n\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tconst result = await this.model.unarchiveSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session unarchive", result.error);\n\t\t\t}\n\t\t\tasync deleteSession(sessionId) {\n\t\t\t\tconst result = await this.model.deleteSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session delete", result.error);\n\t\t\t}';
+
+// ---------------------------------------------------------------------------
 // 4. dsh-client-ui-workspace：会话行菜单「删除对话」+ 翻译
 // ---------------------------------------------------------------------------
 const UI_MENU_ANCHOR = '{\n\t\t\t\t\tid: "archive",\n\t\t\t\t\tlabel: t("menu.archiveSession"),\n\t\t\t\t\ticon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconArchiveOutline20, { size: 16 })\n\t\t\t\t}\n\t\t\t];';
@@ -138,16 +255,19 @@ function applyReplacements(file: string, replacements: ReplacementEntry[], upgra
   if (src.includes(MARKER)) {
     // 已应用：仍执行「升级替换」（旧版补丁 → 新版语义，幂等），
     // 例如 v1「当前会话行不显示删除」→ v2「所有会话行显示删除」。
+    // skipIf：insert 以 anchor 为前缀的插入型升级必须自带防重门槛，
+    // 否则 anchor 永远命中、监听会被反复叠加。
     let upgraded = false;
-    for (const { anchor, insert } of upgradeRules) {
+    for (const { anchor, insert, skipIf } of upgradeRules) {
+      if (skipIf !== undefined && src.includes(skipIf)) continue;
       if (src.includes(anchor)) {
-        src = src.replace(anchor, insert);
+        src = src.replace(anchor, () => insert);
         upgraded = true;
       }
     }
     if (upgraded) {
       try {
-        fs.writeFileSync(file, src, 'utf8');
+        writeAtomic(file, src, 'utf8');
         log('session-manage 补丁: 已升级 ' + file);
         return true;
       } catch (err) {
@@ -167,11 +287,11 @@ function applyReplacements(file: string, replacements: ReplacementEntry[], upgra
       log('session-manage 补丁: 锚点未匹配（dsh 版本可能已变化），跳过 ' + file + ' :: ' + (candidates[0]?.anchor ?? '').slice(0, 60));
       return false;
     }
-    src = src.replace(hit.anchor, hit.insert);
+    src = src.replace(hit.anchor, () => hit.insert);
   }
   src = '// ' + MARKER + ': 对话删除/归档管理运行时补丁\n' + src;
   try {
-    fs.writeFileSync(file, src, 'utf8');
+    writeAtomic(file, src, 'utf8');
     log('session-manage 补丁: 已应用 ' + file);
     return true;
   } catch (err) {
@@ -229,6 +349,44 @@ export function patchSessionManage(nmRoot: string, log: (msg: string) => void = 
       ],
       upgradeRules: [
         { anchor: UI_MENU_UPGRADE_ANCHOR, insert: UI_MENU_UPGRADE_INSERT },
+      ],
+    },
+    // ---- 内核 0.1.2-alpha.1+：typert Remote 服务落点（见第 5 节注释）----
+    {
+      file: path.join(nmRoot, '@deepseek-ai', 'dsh-api-workspace-controller', 'lib', 'index.js'),
+      replacements: [
+        { anchor: CTRL_RUNNING_ANCHOR, insert: CTRL_RUNNING_INSERT },
+        { anchor: CTRL_INJECT_ANCHOR, insert: CTRL_INJECT_INSERT },
+        { anchor: CTRL_METHOD_ANCHOR, insert: CTRL_METHOD_INSERT },
+        { anchor: CTRL_PROXY_ANCHOR, insert: CTRL_PROXY_INSERT },
+        { anchor: CTRL_DECORATOR_ANCHOR, insert: CTRL_DECORATOR_INSERT },
+        { anchor: CTRL_ESDECORATE_ANCHOR, insert: CTRL_ESDECORATE_INSERT },
+        { anchor: CTRL_FEED_ANCHOR, insert: CTRL_FEED_INSERT },
+      ],
+      // 已打补丁的文件（含 MARKER）也要补上 0.1.2 运行守卫监听。
+      upgradeRules: [
+        { anchor: CTRL_FEED_ANCHOR, insert: CTRL_FEED_INSERT, skipIf: '同步每会话运行状态' },
+      ],
+    },
+    {
+      file: path.join(nmRoot, '@deepseek-ai', 'dsh-api-workspace-controller', 'lib', 'typert.host.js'),
+      replacements: [
+        { anchor: TYPERT_SCHEMA_ANCHOR, insert: TYPERT_SCHEMA_INSERT },
+        { anchor: TYPERT_ENTRY_ANCHOR, insert: TYPERT_ENTRY_INSERT },
+      ],
+    },
+    {
+      file: path.join(nmRoot, '@deepseek-ai', 'dsh-api-workspace-controller', 'lib', 'client.js'),
+      replacements: [
+        { anchor: CTRL_CLIENT_MODEL_ANCHOR, insert: CTRL_CLIENT_MODEL_INSERT },
+        { anchor: CTRL_CLIENT_CMD_ANCHOR, insert: CTRL_CLIENT_CMD_INSERT },
+      ],
+    },
+    {
+      file: path.join(nmRoot, '@deepseek-ai', 'dsh-api-remotes', 'lib', 'client.js'),
+      replacements: [
+        { anchor: REMOTES_SCHEMA_ANCHOR, insert: REMOTES_SCHEMA_INSERT },
+        { anchor: REMOTES_ENTRY_ANCHOR, insert: remotesEntryInsert() + '\n' + REMOTES_ENTRY_ANCHOR },
       ],
     },
   ];

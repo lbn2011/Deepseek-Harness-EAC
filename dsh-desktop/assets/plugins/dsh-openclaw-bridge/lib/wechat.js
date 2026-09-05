@@ -16,7 +16,7 @@ const SESSION_TTL_MS = 23 * 60 * 60 * 1000; // 提前 1h 判过期，留缓冲
 const CHANNEL_VERSION = "2.4.6";
 
 // iLink-App-ClientVersion: uint32 编码 0x00MMNNPP 的十进制字符串
-// （官方实现：major<<16 | minor<<8 | patch，如 2.4.6 -> "131590"）。
+// （官方实现：major<<16 | minor<<8 | patch，如 2.4.6 -> "132102"）。
 function packClientVersion(version) {
   const parts = String(version).split(".").map((p) => parseInt(p, 10));
   const major = parts[0] || 0;
@@ -118,6 +118,11 @@ export function createWechatClient(options = {}) {
 
   async function fetchJson(url, init) {
     const resp = await fetch(url, init);
+    if (!resp.ok) {
+      // HTTP 错误必须显式失败：token 过期（24h 必然发生）时服务端返回
+      // 401/HTML 错误体，静默当成功会让回复链路无声丢失且无任何告警。
+      throw new Error("HTTP " + resp.status + (resp.statusText ? " " + resp.statusText : ""));
+    }
     let data;
     try {
       data = await resp.json();
@@ -145,46 +150,55 @@ export function createWechatClient(options = {}) {
   }
 
   /** 扫码状态轮询：wait → scaned → (need_verifycode) → confirmed/expired。 */
+  let qrPollRunning = false;
   async function pollQrStatus() {
-    while (!disposed && (state === "waiting-scan" || state === "need-verifycode" || state === "waiting-qr")) {
-      await sleep(2000);
-      if (disposed || !qrcode) return;
-      let data;
-      try {
-        let url = base + "/ilink/bot/get_qrcode_status?qrcode=" + encodeURIComponent(qrcode);
-        if (pendingVerify) url += "&verify_code=" + encodeURIComponent(pendingVerify);
-        data = await fetchJson(url, { method: "GET", headers: baseHeaders() });
-      } catch {
-        continue;
+    // 单实例守卫：startLogin 与 submitVerify 都可能触发轮询，双循环会
+    // 对同一 qrcode 并发轮询、状态互相踩踏。
+    if (qrPollRunning) return;
+    qrPollRunning = true;
+    try {
+      while (!disposed && (state === "waiting-scan" || state === "need-verifycode" || state === "waiting-qr")) {
+        await sleep(2000);
+        if (disposed || !qrcode) return;
+        let data;
+        try {
+          let url = base + "/ilink/bot/get_qrcode_status?qrcode=" + encodeURIComponent(qrcode);
+          if (pendingVerify) url += "&verify_code=" + encodeURIComponent(pendingVerify);
+          data = await fetchJson(url, { method: "GET", headers: baseHeaders() });
+        } catch {
+          continue;
+        }
+        const p = payloadOf(data);
+        const st = p.status || data.status || "";
+        if (st === "need_verifycode") {
+          setState("need-verifycode");
+          continue;
+        }
+        if (st === "verified" || st === "confirmed" || st === "binded_redirect") {
+          const info = p;
+          const token = info.bot_token || info.token;
+          if (!token) continue;
+          session = {
+            token,
+            botId: info.ilink_bot_id || info.bot_id || "",
+            userId: info.ilink_user_id || info.user_id || "",
+            baseurl: info.baseurl || base,
+            savedAt: Date.now(),
+            cursor: "",
+          };
+          saveSession();
+          setState("connected");
+          startLoop();
+          return;
+        }
+        if (st === "expired" || st === "verify_code_blocked") {
+          setState("expired");
+          return;
+        }
+        // wait / scaned / scaned_but_redirect → 继续轮询
       }
-      const p = payloadOf(data);
-      const st = p.status || data.status || "";
-      if (st === "need_verifycode") {
-        setState("need-verifycode");
-        continue;
-      }
-      if (st === "verified" || st === "confirmed" || st === "binded_redirect") {
-        const info = p;
-        const token = info.bot_token || info.token;
-        if (!token) continue;
-        session = {
-          token,
-          botId: info.ilink_bot_id || info.bot_id || "",
-          userId: info.ilink_user_id || info.user_id || "",
-          baseurl: info.baseurl || base,
-          savedAt: Date.now(),
-          cursor: "",
-        };
-        saveSession();
-        setState("connected");
-        startLoop();
-        return;
-      }
-      if (st === "expired" || st === "verify_code_blocked") {
-        setState("expired");
-        return;
-      }
-      // wait / scaned / scaned_but_redirect → 继续轮询
+    } finally {
+      qrPollRunning = false;
     }
   }
 
@@ -194,6 +208,9 @@ export function createWechatClient(options = {}) {
     if (!c) return false;
     pendingVerify = c;
     setState("need-verifycode");
+    // 轮询循环可能已退出（expired 后重新提交配对码）：必须重启，否则
+    // 配对码无人消费，状态停在 need-verifycode 永不前进。
+    void pollQrStatus();
     return true;
   }
 

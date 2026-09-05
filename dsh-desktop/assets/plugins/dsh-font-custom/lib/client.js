@@ -131,6 +131,11 @@ window.__ModuleLoader__.load({
       return css;
     }
 
+    // 兜底 observer 提为模块级单例：旧实现内嵌在「标签缺失」分支里，标签
+    // 每次被重建就再新建一个 observer 且从不 disconnect，多次 apply 后同一
+    // head 变更会被多个 observer 重复处理。
+    var headGuardMo = null;
+
     function applyConfig(cfg) {
       var css = buildCss(cfg);
       var el = document.getElementById(STYLE_ID);
@@ -139,18 +144,19 @@ window.__ModuleLoader__.load({
         el.id = STYLE_ID;
         el.dataset.plugin = "dsh-font-custom";
         document.head.appendChild(el);
-        // 皮肤切换/热重载会重排 head：被挤掉时重新挂回末尾。
-        var mo = new MutationObserver(function () {
+      }
+      // 皮肤切换/热重载会重排 head：标签被挤掉时重新挂回末尾；被整个移除时
+      // 按当前存储配置重建 —— 不能用闭包捕获的 css（那是本次 apply 时的旧
+      // 值，用户改过配置后重建会回退旧样式）。复用 loadStored + applyConfig
+      // 重算样式，顺带恢复流光 body 属性；observer 已是模块级单例，重入
+      // 不会再新建。
+      if (!headGuardMo) {
+        headGuardMo = new MutationObserver(function () {
           var cur = document.getElementById(STYLE_ID);
           if (cur && cur.parentNode !== document.head) document.head.appendChild(cur);
-          else if (!cur) {
-            cur = document.createElement("style");
-            cur.id = STYLE_ID;
-            cur.textContent = css;
-            document.head.appendChild(cur);
-          }
+          else if (!cur) applyConfig(loadStored());
         });
-        mo.observe(document.head, { childList: true });
+        headGuardMo.observe(document.head, { childList: true });
       }
       el.textContent = css;
       // 流光开关以 body 属性下发（CSS 变量无法直接门控 animation）。

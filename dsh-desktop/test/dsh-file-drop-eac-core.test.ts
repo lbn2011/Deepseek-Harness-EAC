@@ -1,7 +1,7 @@
 // Tests for the dsh-file-drop-eac companion plugin's pure core.
 // EAC 特化版（取代 dsh-file-drop）：
-//   · 文本/代码文件 → 内容注入输入框（体积上限内）
-//   · 二进制 / 超大文件 / .sql → 只注入完整路径提示（不贴内容）
+//   · 普通文件 → 文件卡片 + 紧凑路径引用
+//   · 文本文件 → 卡片支持摘要预览，保存失败时才回退内容注入
 //   · 图片 → 完全不接管（交给 picturereader / 缩略图，避免重复注入）
 //   · 文件夹 → 识别并给出可操作降级提示
 // 纯逻辑挂在 lib/client.js 的 `window.__dshFileDropEacCore`（classic-script
@@ -15,24 +15,41 @@ import vm from 'node:vm';
 const BUNDLE = new URL('../assets/plugins/dsh-file-drop-eac/lib/client.js', import.meta.url);
 
 /** 用 stubbed window 载入真实 client bundle，返回暴露的 core。 */
-function loadCore() {
+function loadCore(language = '', documentOverrides = {}) {
   const src = readFileSync(BUNDLE, 'utf8');
   const captured = {};
   const win = {
     __ModuleLoader__: { load: (handoff) => { captured.handoff = handoff; } },
   };
+  const document = {
+    documentElement: { lang: language },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    ...documentOverrides,
+  };
   vm.runInNewContext(src, {
-    window: win, console, setTimeout, clearTimeout,
+    window: win, document, console, setTimeout, clearTimeout,
     FileReader: class {}, DataTransfer: class {}, InputEvent: class {}, Event: class {},
     HTMLTextAreaElement: { prototype: {} },
   });
   assert.ok(captured.handoff, 'bundle must register via __ModuleLoader__.load');
   assert.equal(captured.handoff.id, 'dsh-file-drop-eac', 'handoff must carry the plugin id');
   assert.ok(win.__dshFileDropEacCore, 'bundle must expose the pure core');
-  return win.__dshFileDropEacCore;
+  return { core: win.__dshFileDropEacCore, handoff: captured.handoff };
 }
 
-const core = loadCore();
+const { core } = loadCore();
+
+test('English UI produces English file and folder instructions for the agent', () => {
+  const { core: englishCore } = loadCore('en');
+  const pathHint = englishCore.buildPathHint({ name: 'a.zip', path: 'C:\\a.zip', size: 10 });
+  const folderHint = englishCore.buildFolderHint([{ name: 'project', virtualPath: '/project' }]);
+  assert.match(pathHint, /Dropped file/);
+  assert.match(pathHint, /Full path/);
+  assert.doesNotMatch(pathHint, /[\u3400-\u9fff]/u);
+  assert.match(folderHint, /Dropped folders/);
+  assert.doesNotMatch(folderHint, /[\u3400-\u9fff]/u);
+});
 
 const TEXT_SAMPLES = ['a.txt', 'main.js', 'b.md', 'c.json', 'd.yaml', 'e.log', 'f.csv', 'Makefile', 'LICENSE', 'package.json'];
 const IMAGE_SAMPLES = ['a.png', 'b.jpg', 'c.jpeg', 'd.webp', 'e.gif', 'f.bmp', 'g.svg'];
@@ -135,4 +152,179 @@ test('planDrop: 图片不接管(skipped)，文本进 texts、二进制进 hints�
 test('TEXT_MAX_BYTES is a sane clamp', () => {
   assert.equal(typeof core.TEXT_MAX_BYTES, 'number');
   assert.ok(core.TEXT_MAX_BYTES >= 65536 && core.TEXT_MAX_BYTES <= 1024 * 1024);
+});
+
+test('drop handling is limited to the composer input target', () => {
+  const input = { id: 'composer-input' };
+  assert.equal(core.composerInputOf({
+    closest: (selector) => selector === '[data-composer-input="true"]' ? input : null,
+  }), input);
+  assert.equal(core.composerInputOf({
+    closest: () => null,
+  }), null, 'message area and sidebars must not be treated as drop targets');
+  assert.equal(core.composerInputOf(null), null);
+});
+
+test('appendDraft keeps existing text and terminates the inserted block with a newline', () => {
+  assert.equal(core.appendDraft('', 'alpha'), 'alpha\n');
+  assert.equal(core.appendDraft('before', 'alpha'), 'before\nalpha\n');
+  assert.equal(core.appendDraft('before\n', 'alpha\n'), 'before\nalpha\n');
+  assert.equal(core.appendDraft('before', ''), 'before');
+});
+
+test('file references stay compact instead of expanding the full text file in the composer', () => {
+  const reference = core.buildFileReference({
+    name: 'SKILL.md',
+    path: 'C:\\Temp\\SKILL.md',
+    size: 2048,
+  });
+  assert.match(reference, /SKILL\.md/);
+  assert.match(reference, /C:\\Temp\\SKILL\.md/);
+  assert.match(reference, /2\.0 KB/);
+  assert.doesNotMatch(reference, /## Workflow/);
+});
+
+test('removeInsertedBlock removes only the matching file reference', () => {
+  const block = '[拖入文件：SKILL.md]\n完整路径：C:\\Temp\\SKILL.md\n';
+  assert.equal(
+    core.removeInsertedBlock(`保留文本\n${block}后续文本\n`, block),
+    '保留文本\n后续文本\n',
+  );
+  assert.equal(core.removeInsertedBlock('用户已改写', block), '用户已改写');
+});
+
+test('transferLooksImageOnly distinguishes image-only and ordinary file drags', () => {
+  assert.equal(core.transferLooksImageOnly({
+    types: ['Files'],
+    items: [{ kind: 'file', type: 'image/png' }],
+  }), true);
+  assert.equal(core.transferLooksImageOnly({
+    types: ['Files'],
+    items: [{ kind: 'file', type: 'text/markdown' }],
+  }), false);
+  assert.equal(core.transferLooksImageOnly({
+    types: ['Files'],
+    items: [{ kind: 'file', type: '' }],
+  }), false, 'unknown MIME must use the file handler until the drop reveals its name');
+});
+
+test('conversation input overlay capture routes inserts through inputActions.setDraft', () => {
+  const { core: isolatedCore, handoff } = loadCore();
+  let capturedComponent = null;
+  let effect = null;
+  const react = {
+    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useRef: (value) => ({ current: value }),
+    useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
+    useEffect: (fn) => {
+      effect = fn;
+      fn();
+    },
+  };
+  const plugin = handoff.factory((name) => {
+    if (name === 'react') return react;
+    if (name === 'react-dom') return { createPortal: (child) => child };
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') {
+      return { IconCloseOutline16: () => null, IconPaperclipOutline16: () => null };
+    }
+    assert.fail(`unexpected module: ${name}`);
+  });
+  assert.deepEqual([...plugin.inject], ['slots']);
+  plugin.apply({
+    effect: (fn) => fn(),
+    slots: {
+      inject: (name, register) => {
+        assert.equal(name, 'conversation.input.overlay');
+        register();
+      },
+      register: (_descriptor, component) => {
+        capturedComponent = component;
+        return () => {};
+      },
+    },
+  });
+  assert.equal(typeof capturedComponent, 'function');
+  let written = '';
+  capturedComponent({
+    sessionId: 'session-1',
+    inputActions: { setDraft: (value) => { written = value; } },
+    useInput: (selector) => selector({ draft: 'existing' }),
+  });
+  assert.equal(typeof effect, 'function');
+  assert.equal(isolatedCore.appendToCurrentDraft('dropped'), true);
+  assert.equal(written, 'existing\ndropped\n');
+});
+
+test('drag events are prevented only when files are over the composer input', () => {
+  const listeners = new Map();
+  const { handoff } = loadCore('', {
+    addEventListener: (name, listener) => { listeners.set(name, listener); },
+    removeEventListener: () => {},
+  });
+  const plugin = handoff.factory((name) => {
+    if (name === 'react') return { useEffect: () => {} };
+    if (name === 'react-dom') return { createPortal: (child) => child };
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return {};
+    assert.fail(`unexpected module: ${name}`);
+  });
+  plugin.apply({
+    effect: (fn) => fn(),
+    slots: {
+      inject: (_name, register) => register(),
+      register: () => () => {},
+    },
+  });
+
+  const dragover = listeners.get('dragover');
+  assert.equal(typeof dragover, 'function');
+  let outsidePrevented = 0;
+  let outsideStopped = 0;
+  dragover({
+    target: { closest: () => null },
+    dataTransfer: {
+      types: ['Files'],
+      items: [{ kind: 'file', type: 'text/plain' }],
+    },
+    preventDefault: () => { outsidePrevented += 1; },
+    stopImmediatePropagation: () => { outsideStopped += 1; },
+  });
+  assert.equal(outsidePrevented, 0);
+  assert.equal(outsideStopped, 1, 'ordinary files must not activate the global image overlay');
+
+  const input = {};
+  let insidePrevented = 0;
+  let insideStopped = 0;
+  const dataTransfer = {
+    types: ['Files'],
+    items: [{ kind: 'file', type: 'text/plain' }],
+    dropEffect: 'none',
+  };
+  dragover({
+    target: {
+      closest: (selector) => selector === '[data-composer-input="true"]' ? input : null,
+    },
+    dataTransfer,
+    preventDefault: () => { insidePrevented += 1; },
+    stopImmediatePropagation: () => { insideStopped += 1; },
+  });
+  assert.equal(insidePrevented, 1);
+  assert.equal(insideStopped, 1);
+  assert.equal(dataTransfer.dropEffect, 'copy');
+
+  let imagePrevented = 0;
+  let imageStopped = 0;
+  dragover({
+    target: {
+      closest: (selector) => selector === '[data-composer-input="true"]' ? input : null,
+    },
+    dataTransfer: {
+      types: ['Files'],
+      items: [{ kind: 'file', type: 'image/png' }],
+      dropEffect: 'none',
+    },
+    preventDefault: () => { imagePrevented += 1; },
+    stopImmediatePropagation: () => { imageStopped += 1; },
+  });
+  assert.equal(imagePrevented, 0);
+  assert.equal(imageStopped, 0, 'image-only drags must remain owned by the official attachment plugin');
 });

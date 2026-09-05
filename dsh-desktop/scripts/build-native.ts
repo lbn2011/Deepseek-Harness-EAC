@@ -6,8 +6,10 @@
  * Rust 工具链自带的 rust-lld（LLVM lld-link，MSVC 兼容驱动）完全胜任本
  * crate 的链接（仅依赖 kernel32），故构建统一走 lld-link：
  *   1. `rustc --print sysroot` 定位工具链内 rust-lld.exe；
- *   2. 复制为 target/lld-link.exe（argv0 即 flavor，免 -flavor 参数）；
- *   3. 以 RUSTFLAGS=-C linker=... 调 cargo（build/test/clippy 统一入口）。
+ *   2. 复制为 %TEMP%/dsh-lld-link/lld-link.exe（argv0 即 flavor，免 -flavor
+ *      参数；放 TEMP 避开仓库路径空格 —— CARGO_ENCODED_RUSTFLAGS 见下）；
+ *   3. 以 CARGO_ENCODED_RUSTFLAGS=-Clinker=... 调 cargo（build/test/clippy 统一入口；
+ *      encoded 形式：RUSTFLAGS 按空白切分且引号变字面字符，路径含空格必挂）。
  *
  * 用法（module 缺省 supervisor，保持既有调用零改动）：
  *   node scripts/build-native.js build [module] [--release] → cargo build
@@ -44,6 +46,22 @@ const targetDir = path.join(crateRoot, 'target');
 const manifest = path.join(crateRoot, 'Cargo.toml');
 const artifactBase = `dsh_${moduleName}_native`;
 
+const WINDOWS_MSVC_TARGET = 'x86_64-pc-windows-msvc';
+
+function windowsCargoTarget(): string | undefined {
+  if (process.platform !== 'win32') return undefined;
+  const configured = process.env.CARGO_BUILD_TARGET;
+  if (configured !== undefined && configured !== WINDOWS_MSVC_TARGET) {
+    throw new Error(`[build-native] Windows 原生模块要求 ${WINDOWS_MSVC_TARGET}，当前 CARGO_BUILD_TARGET=${configured}`);
+  }
+  return WINDOWS_MSVC_TARGET;
+}
+
+function cargoReleaseDir(): string {
+  const target = windowsCargoTarget();
+  return target === undefined ? path.join(targetDir, 'release') : path.join(targetDir, target, 'release');
+}
+
 /** 取工具链 sysroot（失败抛出 —— 没有 rustc 时无法构建）。 */
 function sysroot(): string {
   const r = spawnSync('rustc', ['--print', 'sysroot'], { encoding: 'utf8' });
@@ -76,7 +94,7 @@ function runCargo(sub: string, rest: string[]): number {
 
 /** 复制 cargo cdylib 产物 → index.node（存在性断言）。 */
 function copyArtifact(): void {
-  const releaseDir = path.join(targetDir, 'release');
+  const releaseDir = cargoReleaseDir();
   const candidates =
     process.platform === 'win32' ? [`${artifactBase}.dll`]
     : process.platform === 'darwin' ? [`lib${artifactBase}.dylib`]

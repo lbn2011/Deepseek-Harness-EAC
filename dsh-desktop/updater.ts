@@ -246,7 +246,7 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    activeProc = proc;
+    activeProcs.add(proc);
     let settled = false;
     let stdoutBuf = '';
     let stderrBuf = '';
@@ -273,7 +273,7 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       settled = true;
       clearTimeout(timer);
       if (stallTimer) clearTimeout(stallTimer);
-      activeProc = null;
+      activeProcs.delete(proc);
       await killProc(proc);
       reject(e);
     };
@@ -583,7 +583,7 @@ export function confirmPreviousAgentHealthy(ctx: UpdCtx): boolean {
   if (!settings.previousAgent) return false;
   const prevDir = previousAgentDir(ctx);
   try {
-    if (fs.existsSync(prevDir)) fs.rmSync(prevDir, { recursive: true, force: true, maxRetries: 3 });
+    if (fs.existsSync(prevDir)) await fs.promises.rm(prevDir, { recursive: true, force: true, maxRetries: 3 });
     settings.previousAgent = null;
     saveSettings(ctx, settings);
     ctx.log('update', '新版启动确认健康，已清理上一版本备份');

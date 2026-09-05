@@ -1,5 +1,7 @@
 import Schema from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+// 0.1.3：dsh-settings 移除 settingsNamespace 独立导出 —— 改走共享兼容垫片
+//（lib/settings-compat.js 随插件自包含分发，行为与 0.1.2 逐行一致）。
+import { settingsNamespace } from './settings-compat.js'
 import {
   DEFAULT_CONFIG,
   compactStatus,

@@ -14,8 +14,13 @@
 // system prompt 全文（只读），供客户端设置页「预览官方提示词」入口对照编辑自定义提示词。
 
 import z from "@deepseek-ai/schemastery";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import { PERSONA_SECTION, PERSONA_ORDER, renderPrompt } from "@deepseek-ai/dsh-system-prompt";
+// 0.1.3：dsh-settings 移除两个独立导出 —— 改走内嵌兼容垫片（行为逐行一致）。
+import { installSettingsSection, settingsNamespace } from "./settings-compat.js";
+// 0.1.3：dsh-system-prompt 移除 PERSONA_ORDER 独立导出 —— order 恒等值本地
+// 保留（内核 SECTION_ORDERS.DEPLOYMENT_PERSONA = 0，vendored 源码核对）。
+import { PERSONA_SECTION, renderPrompt } from "@deepseek-ai/dsh-system-prompt";
+
+const PERSONA_ORDER = 0;
 
 const name = "@deepseek-ai/dsh-prompt-custom";
 const inject = ["settings", "systemPrompt", "webServer"];

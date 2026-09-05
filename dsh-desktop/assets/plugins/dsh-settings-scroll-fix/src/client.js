@@ -64,14 +64,38 @@ window.__ModuleLoader__.load({
       return count
     }
 
+    // 会话列骨架的稳定契约（内核 data-* 属性，非构建哈希）：设置弹层是
+    // portal 到 body 的浮层，绝不会包含会话树；候选"设置根"一旦包含
+    // 这些节点，说明种子匹配失真（如侧栏"设置"按钮把公共祖先爬到整页
+    // 框架），必须整条丢弃 —— 否则修复器会把对话区大盒子当滚动容器打标。
+    // 只收 [data-conversation-scroll] / [data-composer-seat] 两个会话骨架
+    // 独占属性：[data-phase] 不是会话专属（设置弹层的 plugin-inventory
+    // 分区条目同样挂 data-phase），纳入判定会把设置浮层自己误判成"含
+    // 会话树"而整条拒绝，令修复在 role=dialog 缺失的形态下整体失效。
+    const CONVERSATION_GUARD_SELECTOR = '[data-conversation-scroll], [data-composer-seat]'
+
+    function containsConversationTree(element) {
+      try {
+        return element.querySelector(CONVERSATION_GUARD_SELECTOR) !== null
+      } catch {
+        return false
+      }
+    }
+
     function promoteToSettingsRoot(seed) {
       let current = seed
       for (let depth = 0; isElement(current) && depth < 9; depth += 1) {
         if (current === document.body || current === document.documentElement) break
         const rect = rectOf(current)
         const role = String(current.getAttribute('role') || '').toLowerCase()
-        if (role === 'dialog' && rect.width >= 200 && rect.height >= 150 && settingsSignalCount(current) >= 1) return current
-        if (rect.width >= 250 && rect.height >= 180 && settingsSignalCount(current) >= 2) return current
+        // dialog 分支同样要求不含会话树：浮层形态的"设置根"绝不含
+        // 会话骨架，含之即为种子失真（与下方 250x180 分支同一判定）。
+        if (role === 'dialog' && rect.width >= 200 && rect.height >= 150 && settingsSignalCount(current) >= 1 && !containsConversationTree(current)) return current
+        if (rect.width >= 250 && rect.height >= 180 && settingsSignalCount(current) >= 2) {
+          // 含会话树的大框（整页框架/中心列）不是设置浮层：hero 首页的
+          // "设置"按钮等词表命中会把公共祖先爬到这里，误标会话区。
+          if (!containsConversationTree(current)) return current
+        }
         current = current.parentElement
       }
       return null
@@ -136,6 +160,19 @@ window.__ModuleLoader__.load({
 
     function scoreCandidate(element, root) {
       if (!isVisible(element) || isExcludedScrollable(element)) return -1
+      // 会话区契约元素与其内部一律不打标（纵深兜底）：hero 阶段的
+      // composerStack 因发光背景 svg 天然 scrollHeight > clientHeight，
+      // 曾经以此得分被打上滚动容器标记，overflow-y:auto 连带 overflow-x
+      // 变 auto，横竖双滚动条 + 输入卡底部裁切（2026-08-28 事故）。
+      // 排除列表与"设置根"守卫同一套会话骨架契约（不含 [data-phase]，
+      // 理由见 CONVERSATION_GUARD_SELECTOR），[class*="composer"] 对
+      // 内核 CSS-module 哈希类名（*_composer*）作纵深兜底。
+      try {
+        if (element.matches('[data-conversation-scroll], [data-composer-seat], [data-composer-card], [class*="composer"]')) return -1
+        if (element.closest('[data-conversation-scroll]') !== null) return -1
+      } catch {
+        // 选择器不受支持时按不排除处理，保持旧行为。
+      }
       const clientHeight = Number(element.clientHeight || 0)
       const scrollHeight = Number(element.scrollHeight || 0)
       if (clientHeight < 24 || scrollHeight <= clientHeight + 1) return -1
@@ -197,9 +234,21 @@ window.__ModuleLoader__.load({
         for (const element of nextSet) element.setAttribute(attribute, 'true')
       }
 
+      // 修复节流:0.1.2 内核浮层(floating-ui 等)每帧写 inline style,旧版
+      // 每个 mutation 批次都排一帧全量重扫(getComputedStyle 走查),对话流式
+      // 输出期间形成修复风暴拖垮主线程 —— 全局高延迟的元凶之一。这里把修复
+      // 频率封顶 ≈6.7/s:间隔不足时 rAF 空转到下个窗口,单句柄,dispose 不变。
+      const REPAIR_MIN_MS = 150
+      let lastRepairAt = 0
       const repair = () => {
         animationFrame = 0
         if (disposed) return
+        const elapsed = Date.now() - lastRepairAt
+        if (elapsed < REPAIR_MIN_MS) {
+          animationFrame = window.requestAnimationFrame(repair)
+          return
+        }
+        lastRepairAt = Date.now()
 
         const nextRoots = new Set(discoverSettingsRoots())
         const nextScrollables = new Set()
@@ -248,10 +297,11 @@ window.__ModuleLoader__.load({
         if (root === undefined) return
 
         const delta = wheelDeltaPixels(event)
-        let target = path.find(node => isElement(node) && markedScrollables.has(node) && canScroll(node, delta))
-        if (target === undefined) {
-          target = [...markedScrollables].find(node => root.contains(node) && canScroll(node, delta))
-        }
+        // 只滚动光标路径上的标记容器,绝不做"兜底重定向":设置弹层里左右两栏
+        // 是兄弟滚动容器,原生滚动链只走祖先不会走到兄弟;旧版在左栏滚到底后
+        // 把剩余滚动量手动转嫁给右栏(约 100px/格),用户感知为「滑左栏右边
+        // 跟着小幅滑动」。左栏到底就该停,剩余量交给 overscroll-behavior:contain。
+        const target = path.find(node => isElement(node) && markedScrollables.has(node) && canScroll(node, delta))
         if (target === undefined) return
 
         event.preventDefault()
@@ -263,7 +313,9 @@ window.__ModuleLoader__.load({
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+        // 不监听 style:浮层定位每帧写 inline style,是变更洪水的源头;
+        // 滚动容器的出现/消失由 childList 与 class/hidden 变化覆盖。
+        attributeFilter: ['class', 'hidden', 'aria-hidden'],
       })
       document.addEventListener('wheel', onWheel, { capture: true, passive: false })
       window.addEventListener('resize', scheduleRepair)

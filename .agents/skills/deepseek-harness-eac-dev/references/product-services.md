@@ -68,7 +68,6 @@
 
 ## 错误详情与构建完整性
 
-- `error-detail.ts` 对应 `error-detail.test.ts`。
 - `bundle-integrity.ts` 对应 `bundle-integrity.test.ts`。
 - `builtin-collision.ts` 对应 `builtin-collision.test.ts`。
 

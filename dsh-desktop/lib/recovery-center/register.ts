@@ -42,7 +42,7 @@ import {
 } from '../plugin-manager-core.js';
 import {
   listRegistryEntries, setQuarantined, clearStartFailure,
-  upsertLegacyPlugin,
+  upsertLegacyPlugins,
 } from '../supervisor/registry.js';
 import { COMPANION_PLUGINS } from '../plugin-registry-data.js';
 
@@ -201,16 +201,18 @@ function registerRecoveryCenterIpc(surface: IpcSurface = defaultIpcSurface()): v
  */
 export function archivePluginProfiles(): void {
   try {
-    for (const p of COMPANION_PLUGINS) {
-      upsertLegacyPlugin({ id: p.id, source: 'builtin' });
-    }
+    // 批量建档（一次读 + 一次写）：逐插件 upsert = 40+ 插件 80 次 IO /
+    // 40 次原子写，都在 boot 热路径上。
+    const batch: { id: string; source: 'builtin' | 'market' }[] =
+      COMPANION_PLUGINS.map((p) => ({ id: p.id, source: 'builtin' as const }));
     // patch 行中登记、但不在内置表里的 = 市场/手工安装插件。
     const builtin = new Set(COMPANION_PLUGINS.map((p) => p.id));
     const rows = pluginManagerCollect() as { id: string; core?: boolean }[];
     for (const r of rows) {
       if (builtin.has(r.id) || r.core) continue;
-      upsertLegacyPlugin({ id: r.id, source: 'market' });
+      batch.push({ id: r.id, source: 'market' });
     }
+    upsertLegacyPlugins(batch);
     log('recovery-center', '插件档案已登记到扩展注册表');
   } catch (err) {
     log('recovery-center', '插件档案登记失败: ' + String((err as Error).message));

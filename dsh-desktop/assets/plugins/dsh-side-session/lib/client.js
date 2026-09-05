@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
     // 全局单例 Store（模块级，panel/float 共享；浮窗状态仅内存，不持久化）
     // ------------------------------------------------------------------
     var store = {
-      mode: "1",
+      mode: "3",
       carrier: "float", // 仅浮窗形态
       expanded: false, // 不自动弹出：由 footer 图标 / Ctrl+Shift+S / 斜杠命令唤起（符合 SPEC）
       sessionId: "",
@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
     var settingsScope = null;
     var pluginSettings = {
-      mode: "1",
+      mode: "3",
       apiKey: "",
       model: "deepseek-chat",
       endpoint: "https://api.deepseek.com",
@@ -101,7 +101,7 @@ window.__ModuleLoader__.load({
         if (snap && snap.status === "ready" && snap.value) {
           var v = snap.value;
           pluginSettings = {
-            mode: String(v.mode || "1"),
+            mode: String(v.mode || "3"),
             apiKey: v.apiKey || "",
             model: v.model || "deepseek-chat",
             endpoint: v.endpoint || "https://api.deepseek.com",
@@ -195,34 +195,41 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
     // 系统提示 + 消息组装
     // ------------------------------------------------------------------
+    function usesEnglishUi() {
+      return typeof document !== "undefined" && String(document.documentElement.lang || "").toLowerCase().startsWith("en");
+    }
+
     function buildSystemPrompt(ctx) {
       ctx = ctx || { title: "", files: [], transcript: [] };
       var lines = [];
-      lines.push("你是一个「DSH 临时会话」辅助助手。当前用户正在主会话中工作，你基于下方自动导入的「当前会话上下文」回答用户的临时追问。");
+      var english = usesEnglishUi();
+      lines.push(english
+        ? "You are a DSH temporary-session assistant. Answer the user's temporary questions from the imported current-session context below."
+        : "你是一个「DSH 临时会话」辅助助手。当前用户正在主会话中工作，你基于下方自动导入的「当前会话上下文」回答用户的临时追问。");
       lines.push("");
-      lines.push("硬性规则：");
-      lines.push("1. 你只做解释、分析、答疑，绝不修改任何文件，不要输出任何写文件/编辑/执行命令的操作。");
-      lines.push("2. 回答紧扣上下文；上下文不足以回答时，明确说明「根据当前会话上下文无法确认」。");
-      lines.push("3. 保持简洁，用中文。");
+      lines.push(english ? "Rules:" : "硬性规则：");
+      lines.push(english ? "1. Explain, analyze, and answer questions only. Never modify files or propose write/edit/command operations." : "1. 你只做解释、分析、答疑，绝不修改任何文件，不要输出任何写文件/编辑/执行命令的操作。");
+      lines.push(english ? "2. Stay grounded in the context. If it is insufficient, say that the current session context does not establish the answer." : "2. 回答紧扣上下文；上下文不足以回答时，明确说明「根据当前会话上下文无法确认」。");
+      lines.push(english ? "3. Be concise and answer in English." : "3. 保持简洁，用中文。");
       lines.push("");
-      lines.push("==== 当前会话上下文 ====");
-      lines.push("会话标题：" + (ctx.title || "(未知)"));
+      lines.push(english ? "==== Current session context ====" : "==== 当前会话上下文 ====");
+      lines.push((english ? "Session title: " : "会话标题：") + (ctx.title || (english ? "(unknown)" : "(未知)")));
       lines.push("");
-      lines.push("--- 对话记录（最近部分）---");
+      lines.push(english ? "--- Recent conversation ---" : "--- 对话记录（最近部分）---");
       var trans = ctx.transcript || [];
-      if (trans.length === 0) lines.push("(无)");
+      if (trans.length === 0) lines.push(english ? "(none)" : "(无)");
       else {
         for (var i = 0; i < trans.length; i++) {
           var m = trans[i];
-          var who = m.role === "assistant" ? "助手" : "用户";
+          var who = m.role === "assistant" ? (english ? "assistant" : "助手") : (english ? "user" : "用户");
           var text = (m.text || "").slice(0, 4000);
           lines.push("[" + who + "] " + text);
         }
       }
       lines.push("");
-      lines.push("--- 本会话涉及的文件 ---");
+      lines.push(english ? "--- Files involved in this session ---" : "--- 本会话涉及的文件 ---");
       var files = ctx.files || [];
-      if (files.length === 0) lines.push("(无)");
+      if (files.length === 0) lines.push(english ? "(none)" : "(无)");
       else {
         var shown = 0;
         for (var j = 0; j < files.length; j++) {
@@ -233,7 +240,7 @@ window.__ModuleLoader__.load({
           if (content) lines.push(content);
           shown++;
           if (shown >= 40) {
-            lines.push("…(文件过多，已截断展示)");
+            lines.push(english ? "...(file list truncated)" : "…(文件过多，已截断展示)");
             break;
           }
         }
@@ -315,7 +322,7 @@ window.__ModuleLoader__.load({
       if (mode === "2" && !pluginSettings.apiKey) {
         setState({
           streaming: false,
-          error: "插件 API Key 为空：请在「设置 → 临时会话」填写 API Key，或切换到其他模式。",
+          error: usesEnglishUi() ? "The plugin API key is empty. Enter one under Settings > Temporary session, or switch modes." : "插件 API Key 为空：请在「设置 → 临时会话」填写 API Key，或切换到其他模式。",
         });
         return;
       }
@@ -348,7 +355,7 @@ window.__ModuleLoader__.load({
                 return { message: "HTTP " + r.status };
               })
               .then(function (e) {
-                throw new Error(e.message || "HTTP " + r.status);
+                throw new Error(e.message || e.error || "HTTP " + r.status);
               });
           }
           return readSSE(r, appendAssistant);
@@ -510,8 +517,9 @@ window.__ModuleLoader__.load({
       "box-shadow:-8px 0 24px rgba(0,0,0,.06);font:inherit}",
       ".dss-root *{box-sizing:border-box}",
       // —— 浮窗：可拖拽、可缩放 ——
-      ".dss-float{position:fixed;z-index:90;top:80px;right:80px;width:420px;height:560px;",
-      "max-width:92vw;max-height:88vh;border-radius:14px;overflow:hidden;",
+      ".dss-float{position:fixed;z-index:90;top:12px;right:12px;",
+      "width:min(420px,calc(100vw - 24px));height:min(560px,calc(100vh - 24px));",
+      "max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);border-radius:14px;overflow:hidden;",
       "border:1px solid var(--dsw-alias-border-l2-darkmode-thin,rgba(0,0,0,.12));",
       "box-shadow:0 12px 40px rgba(0,0,0,.18);animation:dss-pop var(--dss-pop-duration,.5s) cubic-bezier(.16,1,.3,1)}",
       "@keyframes dss-pop{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}",
@@ -611,9 +619,11 @@ window.__ModuleLoader__.load({
       "border-right:2px solid var(--dsw-alias-label-tertiary,#81858c);",
       "border-bottom:2px solid var(--dsw-alias-label-tertiary,#81858c);border-radius:1px;opacity:.5}",
       // —— 左侧主栏 footer 唤起图标（对齐设置按钮：同款行样式 / hover / rail 圆钮）——
-      ".dss-footer-icon{box-sizing:border-box;cursor:pointer;width:calc(100% + 8px);height:34px;",
+      'div:has(> div[data-slot="sidebar.footer.action"] .dss-footer-icon){flex-direction:column;align-items:stretch}',
+      'div:has(> div[data-slot="sidebar.footer.action"] .dss-footer-icon[data-rail="1"]){align-items:center}',
+      ".dss-footer-icon{box-sizing:border-box;cursor:pointer;width:100%;height:34px;",
       "color:var(--dsw-alias-label-primary,#0f1115);background:0 0;border:none;border-radius:12px;",
-      "flex:none;align-items:center;gap:8px;margin:4px -4px;padding:6px 2px 6px 10px;",
+      "flex:none;align-items:center;gap:8px;margin:4px 0;padding:6px 8px 6px 10px;",
       "font-family:inherit;font-size:14px;line-height:22px;display:flex;overflow:hidden;",
       "transition:background .12s,color .12s;outline:none}",
       ".dss-footer-icon:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(38,49,72,.06))}",
@@ -907,6 +917,30 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
     // 载体框架（侧栏停靠 / 浮窗）+ 主布局挤压 + 拖出撕离
     // ------------------------------------------------------------------
+    function fitFloatToViewport(element) {
+      if (!element) return;
+      var margin = 12;
+      var availableWidth = Math.max(1, window.innerWidth - margin * 2);
+      var availableHeight = Math.max(1, window.innerHeight - margin * 2);
+      var rect = element.getBoundingClientRect();
+      var width = Math.min(Math.max(rect.width, Math.min(320, availableWidth)), availableWidth);
+      var height = Math.min(Math.max(rect.height, Math.min(360, availableHeight)), availableHeight);
+
+      element.style.width = width + "px";
+      element.style.height = height + "px";
+      rect = element.getBoundingClientRect();
+
+      var maxX = Math.max(margin, window.innerWidth - margin - rect.width);
+      var maxY = Math.max(margin, window.innerHeight - margin - rect.height);
+      var x = Math.max(margin, Math.min(maxX, rect.left));
+      var y = Math.max(margin, Math.min(maxY, rect.top));
+      element.style.left = x + "px";
+      element.style.top = y + "px";
+      element.style.right = "auto";
+      element.style.bottom = "auto";
+      store.floatPos = { x: x, y: y };
+    }
+
     function CarrierFrame() {
       var s = useStore();
       var rootRef = useRef(null);
@@ -922,8 +956,12 @@ window.__ModuleLoader__.load({
         document.body.style.userSelect = "none";
         function move(ev) {
           if (!drag.current || !floatRef.current) return;
-          var x = Math.max(0, Math.min(window.innerWidth - 60, ev.clientX - drag.current.dx));
-          var y = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - drag.current.dy));
+          var margin = 12;
+          var rect = floatRef.current.getBoundingClientRect();
+          var maxX = Math.max(margin, window.innerWidth - margin - rect.width);
+          var maxY = Math.max(margin, window.innerHeight - margin - rect.height);
+          var x = Math.max(margin, Math.min(maxX, ev.clientX - drag.current.dx));
+          var y = Math.max(margin, Math.min(maxY, ev.clientY - drag.current.dy));
           floatRef.current.style.left = x + "px";
           floatRef.current.style.top = y + "px";
           floatRef.current.style.right = "auto";
@@ -931,6 +969,7 @@ window.__ModuleLoader__.load({
           store.floatPos = { x: x, y: y }; // 同步（不触发重渲染，避免与 React 定位冲突）
         }
         function up() {
+          fitFloatToViewport(floatRef.current);
           drag.current = null;
           document.body.style.userSelect = "";
           document.removeEventListener("mousemove", move);
@@ -948,12 +987,19 @@ window.__ModuleLoader__.load({
         document.body.style.userSelect = "none";
         function move(ev) {
           if (!resize.current || !floatRef.current) return;
-          var w = Math.max(320, Math.min(window.innerWidth - 12, resize.current.sw + (ev.clientX - resize.current.sx)));
-          var h = Math.max(360, Math.min(window.innerHeight - 12, resize.current.sh + (ev.clientY - resize.current.sy)));
+          var margin = 12;
+          var rect = floatRef.current.getBoundingClientRect();
+          var availableWidth = Math.max(1, window.innerWidth - margin - rect.left);
+          var availableHeight = Math.max(1, window.innerHeight - margin - rect.top);
+          var minWidth = Math.min(320, availableWidth);
+          var minHeight = Math.min(360, availableHeight);
+          var w = Math.max(minWidth, Math.min(availableWidth, resize.current.sw + (ev.clientX - resize.current.sx)));
+          var h = Math.max(minHeight, Math.min(availableHeight, resize.current.sh + (ev.clientY - resize.current.sy)));
           floatRef.current.style.width = w + "px";
           floatRef.current.style.height = h + "px";
         }
         function up() {
+          fitFloatToViewport(floatRef.current);
           resize.current = null;
           document.body.style.userSelect = "";
           document.removeEventListener("mousemove", move);
@@ -973,6 +1019,14 @@ window.__ModuleLoader__.load({
           floatRef.current.style.right = "auto";
           floatRef.current.style.bottom = "auto";
         }
+        function fit() {
+          fitFloatToViewport(floatRef.current);
+        }
+        fit();
+        window.addEventListener("resize", fit);
+        return function () {
+          window.removeEventListener("resize", fit);
+        };
       }, [s.carrier]);
 
       // （原侧栏停靠挤压逻辑已移除：仅保留浮窗形态）
@@ -1187,9 +1241,9 @@ window.__ModuleLoader__.load({
           h(
             "select",
             { className: "dss-set-select", value: mode, onChange: function (e) { setMode(e.target.value); } },
-            h("option", { value: "1" }, "1 · 复用 DSH 全局 Key"),
+            h("option", { value: "1" }, "1 · 直连 DeepSeek 官方（全局 Key）"),
             h("option", { value: "2" }, "2 · 插件自带 Key"),
-            h("option", { value: "3" }, "3 · 宿主 LLM（ctx.llm）")
+            h("option", { value: "3" }, "3 · 跟随主对话模型（推荐）")
           ),
           h("div", { className: "dss-set-hint" }, "三模式互斥、持久化、即时切换，无需重启 DSH。")
         ),
@@ -1298,13 +1352,13 @@ window.__ModuleLoader__.load({
           : null,
         h("div", { className: "dss-set-hint" }, "浮窗可自由拖动/缩放；左下角侧栏图标或 Ctrl+Shift+S 唤起。"),
         mode === "1"
-          ? h("div", { className: "dss-set-hint" }, "使用 DSH 全局凭据（DEEPSEEK_API_KEY 环境变量或 ~/.dsh/.credentials.yaml）。")
+          ? h("div", { className: "dss-set-hint" }, "仅直连 DeepSeek 官方接口，使用 DEEPSEEK_API_KEY；不会跟随第三方模型。")
           : null,
         mode === "2"
           ? h("div", { className: "dss-set-hint" }, hasSavedKey ? "已保存插件自带 Key；重新输入会替换旧值。" : "输入后回车 / 失焦即保存（Key 仅存储在本机 settings.yaml，界面不回显明文）。")
           : null,
         mode === "3"
-          ? h("div", { className: "dss-set-hint" }, "走服务端 ctx.llm.stream，不读任何 key。需宿主 LLM 服务可用。")
+          ? h("div", { className: "dss-set-hint" }, "通过宿主 LLM 路由跟随当前主对话的提供方和模型，不单独读取 API Key。")
           : null
       );
     }

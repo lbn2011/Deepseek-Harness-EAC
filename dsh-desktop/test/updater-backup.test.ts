@@ -52,20 +52,21 @@ test('previousAgentInfo returns null without settings or directory', () => {
   assert.ok(previousAgentInfo(ctx), 'settings + directory must be reported');
 });
 
-test('confirmPreviousAgentHealthy clears the backup and the setting', () => {
+test('confirmPreviousAgentHealthy clears the backup and the setting', async () => {
   const { ctx } = makeCtx();
   makeFakePackage(path.join(ctx.userDataDir, 'agent'), '1.2.0');
   fs.mkdirSync(path.join(ctx.userDataDir, 'agent-previous'), { recursive: true });
   writeSettings(ctx, { previousAgent: { version: '1.1.0', dir: 'agent-previous' } });
-  assert.equal(confirmPreviousAgentHealthy(ctx), true);
+  // async 语义（fs.promises.rm）：同步删大目录会冻结事件循环（5.3.5 P0 教训）。
+  assert.equal(await confirmPreviousAgentHealthy(ctx), true);
   assert.equal(fs.existsSync(path.join(ctx.userDataDir, 'agent-previous')), false, 'backup dir must be gone');
   const settings = JSON.parse(fs.readFileSync(path.join(ctx.userDataDir, 'settings.json'), 'utf8'));
   assert.equal(settings.previousAgent, null);
 });
 
-test('confirmPreviousAgentHealthy is a no-op without a previousAgent marker', () => {
+test('confirmPreviousAgentHealthy is a no-op without a previousAgent marker', async () => {
   const { ctx } = makeCtx();
-  assert.equal(confirmPreviousAgentHealthy(ctx), false);
+  assert.equal(await confirmPreviousAgentHealthy(ctx), false);
 });
 
 test('rollbackToPrevious swaps the broken overlay back to the previous version', () => {

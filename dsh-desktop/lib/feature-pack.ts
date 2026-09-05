@@ -469,10 +469,7 @@ export async function parsePackZip(zipPath: string): Promise<{ manifest: PackMan
   const v = validateManifest(parsed);
   if (!v.ok) throw fail('pack.json 校验失败: ' + v.errors.join('；'));
   const manifest = parsed as PackManifest;
-  if (manifest.id + '-' + manifest.version !== path.basename(zipPath).replace(/\.dshpack$/i, '')) {
-    // 文件名约定校验（<id>-<version>.dshpack）；不强制（允许重命名），仅提示。
-    /* 空 */
-  }
+  // 文件名约定（<id>-<version>.dshpack）不强制：允许用户重命名包文件。
   return { manifest, zip };
 }
 
@@ -575,6 +572,24 @@ export function runDshPlugin(args: string[], profile: string): Promise<SpawnResu
     child.stderr?.on('data', onData);
     child.on('error', (err) => resolve({ code: EXIT_FAIL, output: String((err as Error).message) }));
     child.on('close', (code) => resolve({ code: code === null ? EXIT_FAIL : code, output }));
+    // 有界超时：`dsh plugin add/remove` 挂起（网络/文件锁）时 installPack/
+    // updatePack 永久阻塞且不释放 op 状态。market 排队任务同场景有 5 分钟
+    // 强杀兜底，此处对齐；spawn 失败的异步 'error' 也必须有人接。
+    const timer = setTimeout(() => {
+      ctx.log('feature-pack', 'dsh plugin 子进程超时（5 分钟），强制终止');
+      if (process.platform === 'win32') {
+        if (child.pid) {
+          try {
+            const tk = cp.spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+            tk.on('error', () => { /* 已退出 */ });
+          } catch { /* 已退出 */ }
+        }
+      } else {
+        try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
+      }
+    }, 5 * 60 * 1000);
+    child.once('close', () => clearTimeout(timer));
+    child.once('error', () => clearTimeout(timer));
   });
 }
 
@@ -847,6 +862,16 @@ export async function installPack(args: {
   } catch (err) {
     const e = err as Error & { lock?: boolean };
     ctx.log('feature-pack', '安装失败: ' + e.message);
+    // 兑现「失败按保护中心快照回滚」契约：5.3.2 及以前 snapshotRef 取了
+    // 从不消费，已装进 profile 的插件/preset/skill 不回滚。
+    if (snapshotRef && ctx.restoreSnapshot) {
+      try {
+        const res = ctx.restoreSnapshot(snapshotRef);
+        ctx.log('feature-pack', '已回滚到安装前快照 ' + snapshotRef + ': ' + JSON.stringify(res));
+      } catch (rbErr) {
+        ctx.log('feature-pack', '回滚失败（保留半成品，可从保护中心手动恢复）: ' + String((rbErr as Error).message));
+      }
+    }
     if (opRef) writeOpState(opRef, { stage: 'failed', pct: null, message: e.message, done: true, ok: false, error: e.message });
     // 回滚半成品（红线：失败按保护中心快照回滚）：优先整体还原快照；
     // 无快照能力时退而移除已装配插件（uninstallPack 同路径），避免留下
@@ -931,6 +956,8 @@ export async function updatePack(id: string, args: { zipPath?: string; manifest?
   const home = homeOf();
   const opRef = args.opRef || null;
   const stage = (s: string): void => { ctx.log('feature-pack', '[update] ' + s); if (opRef) writeOpState(opRef, { stage: s, pct: null, message: s, done: false }); };
+  // 声明提到 try 外：catch 的回滚分支需要读到它。
+  let snapshotRef: string | null = null;
   try {
     const reg = loadRegistry(home);
     const rec = reg.packs.find((p) => p.id === id);
@@ -960,7 +987,6 @@ export async function updatePack(id: string, args: { zipPath?: string; manifest?
     if (conflictHits.length > 0) return { ok: false, code: EXIT_CONFLICT, error: '与已启用插件冲突: ' + conflictHits.join(', ') };
 
     stage('保护中心快照');
-    let snapshotRef: string | null = null;
     if (ctx.snapshot) {
       try { snapshotRef = ctx.snapshot('pack-update:' + id + ':' + manifest.version)?.id || null; } catch { /* 继续 */ }
     }
@@ -1051,6 +1077,15 @@ export async function updatePack(id: string, args: { zipPath?: string; manifest?
   } catch (err) {
     const e = err as Error & { lock?: boolean };
     ctx.log('feature-pack', '更新失败: ' + e.message);
+    // 同 installPack：失败按更新前快照回滚（兑现契约）。
+    if (snapshotRef && ctx.restoreSnapshot) {
+      try {
+        const res = ctx.restoreSnapshot(snapshotRef);
+        ctx.log('feature-pack', '已回滚到更新前快照 ' + snapshotRef + ': ' + JSON.stringify(res));
+      } catch (rbErr) {
+        ctx.log('feature-pack', '回滚失败（可从保护中心手动恢复）: ' + String((rbErr as Error).message));
+      }
+    }
     if (opRef) writeOpState(opRef, { stage: 'failed', pct: null, message: e.message, done: true, ok: false, error: e.message });
     return { ok: false, stage: 'error', error: e.message, code: e.lock ? EXIT_LOCK : EXIT_FAIL };
   }

@@ -217,7 +217,8 @@ export function pluginManagerSetRemoved(id: string, removed: boolean): OpResult 
         /* 尚未创建 */
       }
       const patched = removePluginFromPatch(text, id);
-      if (patched !== text) fs.writeFileSync(patchFile, patched, 'utf8');
+      // cordis.patch.yml 是启动关键文件：裸写在断电/被杀时截断 = boot 死循环。
+      if (patched !== text) writeFileAtomic(patchFile, patched);
       // 2) 删 profile node_modules 里的包副本（copyPluginPackage 的产物）
       const pkgDir = path.join(desktopProfileDir(), 'node_modules', p.name);
       fs.rmSync(pkgDir, { recursive: true, force: true });

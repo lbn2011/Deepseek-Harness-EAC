@@ -4,6 +4,36 @@ window.__ModuleLoader__.load({ id: 'dsh-dafeiyu', factory: (require) => {
   const React = require('react')
   const { useEffect, useState } = React
   const CONFIG_ENDPOINT = '/plugins/dsh-dafeiyu/config'
+  const VISIBILITY_ENDPOINT = '/plugins/dsh-dafeiyu/visibility'
+
+  function installDialogVisibilityBridge() {
+    let lastSuspended
+    let syncTimer
+    const send = (suspended) => fetch(VISIBILITY_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ suspended }),
+      cache: 'no-store',
+    }).catch(() => {})
+    const sync = () => {
+      const suspended = document.querySelector('[role="dialog"][aria-modal="true"]') !== null
+      if (suspended === lastSuspended) return
+      lastSuspended = suspended
+      void send(suspended)
+    }
+    const schedule = () => {
+      clearTimeout(syncTimer)
+      syncTimer = setTimeout(sync, 0)
+    }
+    sync()
+    const observer = new MutationObserver(schedule)
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+    return () => {
+      observer.disconnect()
+      clearTimeout(syncTimer)
+      if (lastSuspended === true) void send(false)
+    }
+  }
 
   const cardStyle = {
     listStyle: 'none', border: '1px solid var(--border-color, #d8d8d8)', borderRadius: 12,
@@ -104,6 +134,7 @@ window.__ModuleLoader__.load({ id: 'dsh-dafeiyu', factory: (require) => {
   }
 
   function apply(ctx) {
+    ctx.effect(() => installDialogVisibilityBridge(), 'dsh-dafeiyu: avoid application dialogs')
     ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
       name: 'settings.plugin.item', id: 'dsh-dafeiyu', key: 'dsh-dafeiyu', order: 30,
       inject: () => ({}),

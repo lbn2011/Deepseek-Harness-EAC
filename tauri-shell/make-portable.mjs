@@ -50,6 +50,16 @@ rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
 copyFileSync(exe, path.join(staging, 'dsh-eac-shell.exe'));
 writeFileSync(path.join(staging, '.dsh-portable'), '');
+// WebView2Loader.dll：安装版由 tauri.windows.conf.json 把 staged-resources/ 里的
+// 该文件映射到 exe 同级，便携 zip 补上以保持两形态产物面一致。实测壳 exe 已
+// 静态链接 webview2（导入表无该 DLL），此文件属防御性冗余 —— 故为 best-effort：
+// target/release 下存在才复制，缺失跳过（stage-resources 仅在 win32 且找到
+// webview2-com-sys 时装配它，跨形态/旧缓存缺失属正常，不必 fail-fast）。
+const webview2Loader = path.join(rel, 'WebView2Loader.dll');
+if (existsSync(webview2Loader)) {
+  copyFileSync(webview2Loader, path.join(staging, 'WebView2Loader.dll'));
+  console.log('[portable] WebView2Loader.dll 已随包（与安装版产物面一致）');
+}
 
 // 热更新基线（主设计 §7.5）：Tauri resources 映射已把它拷进 target/release；
 // 便携 zip 同样需要（客户端启动时做 baselineSeq 协调）。

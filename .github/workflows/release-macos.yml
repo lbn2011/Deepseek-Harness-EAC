@@ -18,15 +18,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '发布标签（不要以 v 开头，示例 macos-arm64-5.1.0）'
-        required: true
+        # 约束：workflow_dispatch 的 input default 只能写字面量，无法动态引用
+        # package.json —— 故 tag 允许留空，由 job 内「读取版本号」步骤按
+        # dsh-desktop/package.json 的 version 生成 macos-arm64-<版本>。
+        description: '发布标签（不要以 v 开头；留空 = 自动按 package.json 版本生成 macos-arm64-<版本>，示例 macos-arm64-5.1.0）'
+        required: false
         type: string
-        default: 'macos-arm64-5.1.0'
+        default: ''
 
 permissions:
   contents: write
 
 concurrency:
+  # tag 留空时 group 退化为固定串（input default 无法动态取文件，见上方说明）；
+  # 本 workflow 仅手动触发，默认串行无碍，同 tag 的并发保护语义不变。
   group: release-macos-${{ inputs.tag }}
   cancel-in-progress: false
 
@@ -49,6 +54,24 @@ jobs:
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 
+      - name: 从 dsh-desktop/package.json 读取版本号（不再钉死在 workflow 里）
+        id: ver
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          # workflow_dispatch 输入走 env 间接引用：直接插值进 run 脚本是
+          # script-injection 模式（输入含 "/$() 即在 runner 上任意执行）。
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          VERSION="$(node -p "require('./dsh-desktop/package.json').version")"
+          # tag 输入留空时按版本生成默认 tag（macos-arm64-<版本>）
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then TAG="macos-arm64-$VERSION"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "标签: $TAG -> 版本号: $VERSION"
+
       - name: 安装 Rust 工具链（stable → aarch64-apple-darwin）
         uses: dtolnay/rust-toolchain@stable
 
@@ -65,7 +88,7 @@ jobs:
             dsh-cargo-darwin-arm64-
 
       - name: 安装依赖 + 获取 darwin runtime（vendor node）
-        run: npm ci && npm run fetch-runtime
+        run: npm run ci:install && npm run fetch-runtime
 
       - name: 类型检查（tsc --noEmit 零错误）
         run: npm run typecheck
@@ -110,7 +133,8 @@ jobs:
         shell: bash
         run: |
           set -eu
-          VERSION="5.1.0"
+          # 版本取自 dsh-desktop/package.json（「读取版本号」步骤产出），不再钉死
+          VERSION="${{ steps.ver.outputs.version }}"
           APP="tauri-shell/target/release/bundle/macos/Deepseek Harness EAC.app"
           DMG_SRC="$(find tauri-shell/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -type f -print -quit)"
           mkdir -p release-assets
@@ -136,14 +160,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          TAG="${{ inputs.tag }}"
-          VERSION="5.1.0"
+          TAG="${{ steps.ver.outputs.tag }}"
+          VERSION="${{ steps.ver.outputs.version }}"
           EXISTING=0
           if gh release view "$TAG" >/dev/null 2>&1; then EXISTING=1; fi
           cat > "$RUNNER_TEMP/notes.md" <<'EOF'
           ## macOS（Apple Silicon arm64）桌面预览版
 
-          - 版本：5.1.0 · 架构：arm64 · 系统要求：macOS 13.0+
+          - 版本：__DSH_VERSION__ · 架构：arm64 · 系统要求：macOS 13.0+
           - 与 Windows/Linux 完全同源：L1 Tauri 壳 + L2 Node sidecar + L3 DSH 内核
 
           ### 🧑‍💻 macOS 桌面支持贡献
@@ -165,6 +189,10 @@ jobs:
           ### darwin 能力说明
           supported：窗口 / 托盘 / 单实例 / 浮窗 / 文件树 / 终端 / 市场 / 皮肤 · degraded：进程围栏 · external-dependency：OCR · 客户端自更新关闭（dsh agent 更新保留）· 快捷方式维护 unavailable
           EOF
+          # heredoc 保持 quoted（防正文里的 $ 与反引号被 shell 误展开），
+          # 版本占位符在此统一替换为 package.json 实际版本
+          notes="$(cat "$RUNNER_TEMP/notes.md")"
+          printf '%s\n' "${notes//__DSH_VERSION__/$VERSION}" > "$RUNNER_TEMP/notes.md"
           # 统一命名后上传（.app.zip / .dmg / 校验和）
           cd release-assets
           if [ "$EXISTING" = 1 ]; then

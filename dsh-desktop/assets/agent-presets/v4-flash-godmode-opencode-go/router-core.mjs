@@ -108,10 +108,19 @@ export function sessionMode(session) {
   return classifyTask(extractText(userMsg?.data))
 }
 
-/** Replace only the persona section, keeping everything else（plan-mode 等）。 */
+const ROUTER_PERSONA_SECTIONS = new Set([
+  'persona',
+  'deployment:persona',
+  'router-persona',
+])
+
+/**
+ * Replace only the preset-owned persona section. Global contributors such as
+ * dsh-soul-md's `soul:persona` stay in the assembled prompt.
+ */
 export function applyPersona(sections, personaText) {
   const rest = (sections || []).filter(
-    (section) => section.name !== 'persona' && !/persona/i.test(section.name),
+    (section) => !ROUTER_PERSONA_SECTIONS.has(section.name),
   )
   return [...rest, { name: 'router-persona', text: personaText, order: 0 }]
 }

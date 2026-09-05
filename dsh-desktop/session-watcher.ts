@@ -177,7 +177,7 @@ export class SessionWatcher {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
           const p = path.join(dir, entry.name);
           if (entry.isDirectory()) walk(p);
-          else if (entry.name === 'session.jsonl.zstd') out.push(p);
+          else if (SESSION_LOG_RE.test(entry.name)) out.push(p);
         }
       };
       walk(this.sessionsDir);
@@ -190,12 +190,18 @@ export class SessionWatcher {
 
   scan(): boolean {
     let any = false;
+    const seen = new Set<string>();
     for (const file of this.listLogs()) {
       try {
         any = this.process(file) || any;
       } catch (err) {
         this.log('watch', '处理失败 ' + file + ': ' + String((err as Error).message));
       }
+    }
+    // 清扫本轮未被枚举到的记录：会话文件被外部分析器删除/归档后，记录
+    // （含 header 对象）永驻 Map，长寿命进程缓慢泄漏。
+    for (const file of [...this.files.keys()]) {
+      if (!seen.has(file)) this.files.delete(file);
     }
     return any;
   }
@@ -223,6 +229,12 @@ export class SessionWatcher {
       return false;
     }
 
+    // 未压缩 .jsonl（内核 compression 可配 plaintext）：整文件即一帧文本。
+    const plain = !file.endsWith('.zstd');
+    const frames = plain
+      ? [{ start: 0, end: buf.length }]
+      : scanZstdFrames(buf).frames;
+
     // Session header from the first frame (first sight only).
     if (!rec.header) {
       const { frames } = scanZstdFrames(buf);
@@ -239,7 +251,6 @@ export class SessionWatcher {
       }
     }
 
-    const { frames } = scanZstdFrames(buf);
     let turnEnds = 0;
     let assistantMessages = 0;
     let consumed = rec.consumed;
@@ -259,7 +270,10 @@ export class SessionWatcher {
           if (ev.type === 'session/title' && data && typeof data.title === 'string') rec.title = data.title;
           if (ev.type === 'turn/start' || ev.type === 'turn/end') rec.hasTurnEvents = true;
           if (ev.type === 'turn/end') turnEnds += 1;
-          if (ev.type === 'assistant/message') assistantMessages += 1;
+          // 0.1.3 v2：Assistant 流聚合为 assistant/attempt（settlement 时落
+          // assistant/message）。两者都计为「一轮产出」——v2 会话里
+          // attempt 是唯一稳定信号，v0/v1 会话仍走 assistant/message。
+          if (ev.type === 'assistant/message' || ev.type === 'assistant/attempt') assistantMessages += 1;
         }
       }
       consumed = end;

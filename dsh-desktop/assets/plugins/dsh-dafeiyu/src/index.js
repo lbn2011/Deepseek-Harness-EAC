@@ -10,6 +10,7 @@ import {
 export const name = 'dsh-dafeiyu'
 export const inject = ['sessions']
 export const CONFIG_ENDPOINT = '/plugins/dsh-dafeiyu/config'
+export const VISIBILITY_ENDPOINT = '/plugins/dsh-dafeiyu/visibility'
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).description('启用桌面大肥鱼'),
   scale: Schema.number().min(0.7).max(1.4).step(0.05).default(1).role('slider').description('角色大小'),
@@ -61,7 +62,7 @@ function isLoopback(address) {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
 }
 
-async function readPatch(req) {
+async function readJsonBody(req) {
   const chunks = []
   let bytes = 0
   for await (const chunk of req) {
@@ -71,26 +72,35 @@ async function readPatch(req) {
   }
   const value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('patch must be an object')
+  return value
+}
+
+async function readPatch(req) {
+  const value = await readJsonBody(req)
   const allowed = new Set(Object.keys(defaults))
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error('patch contains an unknown setting')
   return value
 }
 
+function rejectsLocalRequest(req, res) {
+  if (!isLoopback(req.socket?.remoteAddress)) {
+    jsonResponse(res, 403, { error: 'local access only' })
+    return true
+  }
+  const origin = req.headers?.origin
+  if (!origin) return false
+  let originHost
+  try { originHost = new URL(origin).host } catch {}
+  if (!originHost || originHost !== req.headers.host) {
+    jsonResponse(res, 403, { error: 'origin mismatch' })
+    return true
+  }
+  return false
+}
+
 export function createConfigHandler(settings) {
   return async (req, res) => {
-    if (!isLoopback(req.socket?.remoteAddress)) {
-      jsonResponse(res, 403, { error: 'local access only' })
-      return
-    }
-    const origin = req.headers?.origin
-    if (origin) {
-      let originHost
-      try { originHost = new URL(origin).host } catch {}
-      if (!originHost || originHost !== req.headers.host) {
-        jsonResponse(res, 403, { error: 'origin mismatch' })
-        return
-      }
-    }
+    if (rejectsLocalRequest(req, res)) return
     if (req.method === 'GET') {
       jsonResponse(res, 200, settings.get())
       return
@@ -108,6 +118,26 @@ export function createConfigHandler(settings) {
   }
 }
 
+export function createVisibilityHandler(setSuspended) {
+  return async (req, res) => {
+    if (rejectsLocalRequest(req, res)) return
+    if (req.method !== 'POST') {
+      jsonResponse(res, 405, { error: 'method not allowed' })
+      return
+    }
+    try {
+      const value = await readJsonBody(req)
+      if (Object.keys(value).length !== 1 || typeof value.suspended !== 'boolean') {
+        throw new Error('suspended must be a boolean')
+      }
+      await setSuspended(value.suspended)
+      jsonResponse(res, 200, { suspended: value.suspended })
+    } catch (error) {
+      jsonResponse(res, 400, { error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+}
+
 function mount(ctx, config = {}, eventCtx = ctx) {
   const logger = ctx.logger ?? console
   const base = publicConfig(config)
@@ -118,6 +148,7 @@ function mount(ctx, config = {}, eventCtx = ctx) {
 
   let bridge
   let reducer
+  let uiSuspended = false
 
   const stopRuntime = (reason = 'settings-change') => {
     bridge?.stop(reason)
@@ -126,6 +157,10 @@ function mount(ctx, config = {}, eventCtx = ctx) {
   }
 
   const startRuntime = (resolved) => {
+    if (uiSuspended) {
+      logger.info?.('dsh-dafeiyu is suspended while an application dialog is open')
+      return
+    }
     if (resolved.enabled === false) {
       logger.info?.('dsh-dafeiyu is disabled')
       return
@@ -181,6 +216,19 @@ function mount(ctx, config = {}, eventCtx = ctx) {
       httpCtx.effect(
         () => httpCtx.webServer.register({ kind: 'exact', path: CONFIG_ENDPOINT, handler: createConfigHandler(settings) }),
         'dsh-dafeiyu: local settings endpoint',
+      )
+      httpCtx.effect(
+        () => httpCtx.webServer.register({
+          kind: 'exact',
+          path: VISIBILITY_ENDPOINT,
+          handler: createVisibilityHandler((next) => {
+            if (uiSuspended === next) return
+            uiSuspended = next
+            if (uiSuspended) stopRuntime('ui-modal-open')
+            else startRuntime(settings.get())
+          }),
+        }),
+        'dsh-dafeiyu: dialog visibility endpoint',
       )
     })
   }

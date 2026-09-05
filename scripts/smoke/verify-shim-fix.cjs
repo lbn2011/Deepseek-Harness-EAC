@@ -126,9 +126,14 @@ const alivePids = (pids) => pids.length === 0 ? Promise.resolve('') : new Promis
     check('globalThis.__DSH_MODULES__ 已由垫片补发', hasModules);
 
     if (hasModules) {
-      // ② editor chunk require 的外部依赖 + CHUNK_EXTERNALS 里的 graph 行
+      // ② editor chunk require 的外部依赖 + CHUNK_EXTERNALS 里的 graph 行。
+      // 0.1.2 起 @deepseek-ai/dsh-client-runtime 包已从内核删除：它只是
+      // better-sidebar CHUNK_EXTERNALS 的超集白名单项（该文件注释明言
+      // "A superset is safe"，editor/terminal chunk 实际 0 引用），raw import
+      // 必然 miss；垫片仅在旧式工厂 ctx 构建时按 LEGACY_SPECIFIER_MAP 映射。
+      // 故不再把它纳入 raw 可解析断言，功能性证明由 ④ loadChunk 全链路承担。
       const ext = await c.evalJs(`(async function() {
-        var specs = ['react', 'react-dom', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-runtime/client'];
+        var specs = ['react', 'react-dom', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'];
         var out = {};
         for (var i = 0; i < specs.length; i++) {
           try { var m = await window.__DSH_MODULES__.import(specs[i]); out[specs[i]] = !!m; }

@@ -88,7 +88,11 @@ peer.handle('invoke', async (params) => {
 });
 
 // init：加载插件并激活（在此之前本进程不执行任何插件代码）
+let initialized = false;
 peer.handle('init', async (params) => {
+  // 协议上 Supervisor 只 init 一次：二次 init 会在旧 runtime/tools 之上
+  // 叠加（工具重复注册、contextProviders 翻倍）—— 直接拒绝。
+  if (initialized) throw new Error('host already initialized');
   const p = params as HostInitParams;
   const mod = require(p.entryPath) as
     | { activate?: (ctx: Record<string, unknown>) => unknown }
@@ -103,6 +107,7 @@ peer.handle('init', async (params) => {
   });
   runtime = rt;
   await activate(ctx);
+  initialized = true;
   return { tools: [...tools.values()].map((t) => t.meta) };
 });
 

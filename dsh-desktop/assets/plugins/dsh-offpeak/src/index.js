@@ -261,41 +261,31 @@ export function apply(ctx, config = {}) {
     };
   };
 
-  /** 执行一条定时任务（与浏览器 session.prompt 同路径）。 */
-  let apiProxyRef = null; // 由 inject 回调捕获（插件自身 ctx 取不到该服务）
+  /** 执行一条定时任务（内核 0.1.2 起 apiProxy 已随 typert RPC 换血移除；
+  *  sessionController 即 cordis 服务（serviceKey 同名），host 侧直调其
+  *  prompt 方法 —— 与浏览器 session.prompt 走同一实现，成功 {accepted:true}，
+  *  业务失败抛 TypertRemoteFailure）。 */
+  let sessionControllerRef = null; // 由 inject 回调捕获（插件自身 ctx 取不到该服务）
   const executeTask = async (task) => {
     if (task.status === "executed" || task.status === "cancelled") return { ok: true, skipped: true };
     task.status = "running";
     try {
-      const api = apiProxyRef !== null ? apiProxyRef : ctx.get("apiProxy");
-      if (api === undefined || api === null || api.sessions === undefined || typeof api.sessions.prompt !== "function") {
-        throw new Error(`apiProxy sessions.prompt unavailable (api=${api === undefined ? "undefined" : api === null ? "null" : "object"}, sessions=${api !== undefined && api !== null && api.sessions !== undefined ? "ok" : "missing"}, prompt=${api !== undefined && api !== null && api.sessions !== undefined && typeof api.sessions.prompt === "function" ? "ok" : "missing"})`);
+      const controller = sessionControllerRef !== null ? sessionControllerRef : ctx.get("sessionController");
+      if (controller === undefined || controller === null || typeof controller.prompt !== "function") {
+        throw new Error(`sessionController.prompt unavailable (controller=${controller === undefined ? "undefined" : controller === null ? "null" : "object"}, prompt=${controller !== undefined && controller !== null && typeof controller.prompt === "function" ? "ok" : "missing"})`);
       }
-      const result = await api.sessions.prompt({
-        rpcId: `offpeak-${task.id}`,
-        payload: {
-          sessionId: task.sessionId,
-          mode: "queue",
-          content: [{ type: "text", text: task.text }],
-        },
+      const outcome = await controller.prompt({
+        requestId: `offpeak-${task.id}`,
+        sessionId: task.sessionId,
+        mode: "queue",
+        content: [{ type: "text", text: task.text }],
       });
-      // 服务端返回 `{ rpcId, result: { ok, value|error } }`（ok/err 辅助函数
-      // 把业务结果包在 result 字段下）；兼容两种层级。
-      const envelope = result !== null && typeof result === "object"
-        ? result
-        : null;
-      const outcome = envelope !== null && envelope.result !== null && typeof envelope.result === "object"
-        ? envelope.result
-        : envelope;
-      if (outcome !== null && outcome.ok === true) {
+      if (outcome !== null && typeof outcome === "object" && outcome.accepted === true) {
         task.status = "executed";
         task.error = undefined;
       } else {
         task.status = "failed";
-        const errBody = outcome !== null && outcome.error !== null && typeof outcome.error === "object" ? outcome.error : null;
-        task.error = errBody !== null
-          ? String(errBody.message ?? "unknown error")
-          : "unknown error";
+        task.error = "prompt rejected: unexpected controller result";
       }
     } catch (error) {
       task.status = "failed";
@@ -335,11 +325,12 @@ export function apply(ctx, config = {}) {
   }, "offpeak: scheduler");
 
   // ---- HTTP 路由 ----
-  ctx.inject(["webServer", "agentDefaultModel", "apiProxy"], (webCtx) => {
-    // 捕获 apiProxy 服务引用：定时执行复用与浏览器完全相同的提交路径。
-    apiProxyRef = webCtx.get("apiProxy") ?? null;
-    if (apiProxyRef === null && ctx.logger?.warn !== undefined) {
-      ctx.logger.warn("[offpeak] apiProxy not injectable — scheduled execution disabled");
+  ctx.inject(["webServer", "agentDefaultModel", "sessionController"], (webCtx) => {
+    // 捕获 sessionController 服务引用：定时执行直调与浏览器 session.prompt
+    // 同一实现（0.1.2 起 apiProxy 已移除）。
+    sessionControllerRef = webCtx.get("sessionController") ?? null;
+    if (sessionControllerRef === null && ctx.logger?.warn !== undefined) {
+      ctx.logger.warn("[offpeak] sessionController not injectable — scheduled execution disabled");
     }
     const sameOrigin = (req) => {
       const origin = req.headers.origin;

@@ -310,6 +310,8 @@ class FallbackFence implements Fence {
       windowsHide: true,
       detached: process.platform !== 'win32',
     });
+    // 同 JobFence.launch：spawn 异步 error 事件必须有人接（见彼处注释）。
+    child.once('error', () => {});
     if (child.pid === undefined) {
       child.kill();
       throw new Error(`围栏 spawn 失败: ${exe}`);

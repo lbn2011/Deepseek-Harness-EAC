@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-side-session",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "private": true,
   "description": "DSH 临时会话：独立悬浮窗，自动导入当前主对话上下文，发起不污染主会话的临时追问",
   "type": "module",
@@ -26,7 +26,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
     }

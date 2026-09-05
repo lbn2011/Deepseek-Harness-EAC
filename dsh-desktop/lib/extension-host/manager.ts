@@ -194,6 +194,10 @@ export class ExtensionHostManager {
         // 退避窗口未到（启动链遇到上次失败/崩溃的排期）：顺延到窗口后再试。
         const delay = backoffLeft + 250;
         log('ext-host', `${id}: 退避窗口未到，${delay}ms 后再拉起`);
+        // 先取消已排期的旧定时器再挂新的：并发两次进入会叠两个定时器，
+        // 到点后各自再拉一次 startPlugin。
+        const prev = this.pendingRestarts.get(id);
+        if (prev) clearTimeout(prev);
         const timer = setTimeout(() => {
           this.pendingRestarts.delete(id);
           void this.startPlugin(id);
@@ -263,12 +267,26 @@ export class ExtensionHostManager {
       rt.initDone = true;
       rt.heartbeat = setInterval(() => void this.heartbeatTick(id), this.o.heartbeatIntervalMs);
       rt.heartbeat.unref();
-      applyTransition(id, { type: 'started', stableForMs: 0 });
+      const started = applyTransition(id, { type: 'started', stableForMs: 0 });
+      if (!started.changed && started.reason !== 'registry-write-failed') {
+        // 状态机拒绝 started（如握手期间已被 quarantine/failed）：握手成功
+        // 也不能让 Host 继续运行 —— 走 killHost 统一清理（摘表 + 停心跳 +
+        // 关 peer）。裸 handle.kill() 会留 rt 在 hosts 表里成「僵尸 Host」
+        //（kill 失败/exit 事件丢失时心跳照跑、工具仍可 invoke）。registry
+        // 写盘瞬时失败除外：状态机语义仍是 running，杀掉健康 Host 反而过度。
+        log('ext-host', `${id}: started 转移被拒（${started.reason}，state=${started.to}），终止 Host`);
+        await this.killHost(id);
+        return false;
+      }
       log('ext-host', `${id}: Host 已运行（pid=${handle.pid}，tools=[${rt.tools.map((t) => t.name).join(',')}]，围栏=${handle.mode}）`);
       return true;
     } catch (err) {
       // 握手失败：Host 可能活着但不可用 —— 杀掉再走 start-failed。
+      // 主动停止（stopPlugin/shutdownAll 在握手期间掐断 peer）：rt 已摘表，
+      // 与 heartbeatTick/onHostExit 的 stopping 守卫对齐直接返回 —— 否则
+      // startFailed → scheduleRestart 会把刚停用的插件自动复活。
       await this.killHost(id);
+      if (rt.stopping) return false;
       this.startFailed(id, `init 握手失败: ${String((err as Error).message)}`);
       return false;
     }

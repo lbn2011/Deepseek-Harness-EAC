@@ -128,6 +128,32 @@ Assert-Fixture -Name 'project-typescript-script' -Condition (
     @($projectTypeScript.data.unmatchedCodeFiles).Count -eq 0
 ) -Failure ($projectTypeScript.raw)
 
+$pluginCopy = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64',
+    (ConvertTo-FilesJsonBase64 '["dsh-desktop/lib/plugin-copy.ts"]')
+)
+Assert-Fixture -Name 'plugin-copy-classification' -Condition (
+    $pluginCopy.exitCode -eq 0 -and
+    $pluginCopy.data.status -eq 'ready' -and
+    $pluginCopy.data.minimumValidation -eq 'full' -and
+    'plugin-copy' -in @($pluginCopy.data.matchedRules) -and
+    @($pluginCopy.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($pluginCopy.raw)
+
+$desktopManifest = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64',
+    (ConvertTo-FilesJsonBase64 '["dsh-desktop/package.json"]')
+)
+Assert-Fixture -Name 'desktop-package-classification' -Condition (
+    $desktopManifest.exitCode -eq 0 -and
+    $desktopManifest.data.status -eq 'ready' -and
+    $desktopManifest.data.minimumValidation -eq 'package' -and
+    'desktop-package-manifest' -in @($desktopManifest.data.matchedRules) -and
+    @($desktopManifest.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($desktopManifest.raw)
+
 $tauriPackaging = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64',

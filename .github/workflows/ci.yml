@@ -68,7 +68,7 @@ jobs:
           key: ${{ matrix.os }}-x64
 
       - name: 安装依赖
-        run: npm ci
+        run: npm run ci:install
 
       - name: 获取内置运行时
         run: npm run fetch-runtime

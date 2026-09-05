@@ -130,6 +130,7 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
       builtin: '已内置', builtinHint: '该插件已随客户端内置分发，每次启动自动同步，无需安装', stBuiltin: '内置插件',
       scanTitle: '安装前冲突预检', scanRun: '预检中…', scanWarn: '注意', scanRefuse: '已拒绝',
       scanForce: '勾选"跳过安全检查"可强制安装（风险自负）。',
+      eacRecommended: 'EAC 推荐',
       marketBanner: '统一插件市场（DSH Desktop 内置）：精选目录（awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm 检索三源合一。安装走双保险（来源白名单 + 试装验证，可在「详情」查看说明）；「统一管理」提供 检查更新 / 自动更新开关（仅提示或自动升级）；市场自身随官方「内置插件更新」自更新。',
     },
     en: {
@@ -157,6 +158,7 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
       builtin: 'Built-in', builtinHint: 'Shipped with the client and re-synced on every launch — no install needed', stBuiltin: 'Built-in plugin',
       scanTitle: 'Pre-install conflict check', scanRun: 'Checking…', scanWarn: 'Note', scanRefuse: 'Refused',
       scanForce: 'Tick "skip safety checks" to force-install (at your own risk).',
+      eacRecommended: 'EAC recommended',
       marketBanner: 'Unified plugin market (bundled with DSH Desktop): curated catalog (awesome-dsh-plugin.com) + GitHub dsh-plugin ecosystem + npm registry in one place. Installs are double-gated (source whitelist + trial boot, see Details). The tool bar provides check updates / auto-update (notify or auto) / health scan / one-click repair. The market itself updates through the official built-in plugin updater.',
     },
   }
@@ -201,6 +203,7 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
 .mkts-main h3 a:hover{color:var(--dsw-static-deepseek-500)}
 .mkts-by{font-family:ui-monospace,monospace;font-size:11px;color:var(--dsw-alias-label-tertiary);margin-left:6px}
 .mkts-stars{font-family:ui-monospace,monospace;font-size:11px;color:var(--dsw-alias-label-tertiary);margin-left:6px}
+.mkts-rec{font-size:10px;color:var(--dsw-static-deepseek-500);border:1px solid color-mix(in srgb,var(--dsw-static-deepseek-500) 45%,transparent);border-radius:999px;padding:0 6px;margin-left:6px;white-space:nowrap}
 .mkts-gh{margin-left:8px;font-size:11px;color:var(--dsw-static-deepseek-500);text-decoration:none}
 .mkts-gh:hover{text-decoration:underline}
 .mkts-desc{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:12.5px;max-width:52em;overflow-wrap:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -829,6 +832,7 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
             h('div', { className: 'mkts-main' },
               h('h3', null,
                 h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.name),
+                p.eacRecommended ? h('span', { className: 'mkts-rec' }, t('eacRecommended')) : null,
                 typeof p.stars === 'number' ? h('span', { className: 'mkts-stars' }, '★ ' + p.stars) : null,
                 p.by ? h('span', { className: 'mkts-by' }, '@' + p.by) : null,
                 h('a', { className: 'mkts-gh', href: p.url, target: '_blank', rel: 'noopener noreferrer' }, t('gh')),

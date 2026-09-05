@@ -2109,8 +2109,13 @@ window.__ModuleLoader__.load({
 		//#endregion
 		//#region lib/client/index.js
 		/** Required services: conversation nodes, slots, sessions navigation, and locale. */
+		// EAC 适配（dsh 0.1.2-alpha.1，原版 0.1.13 面向 rc.2）：rc.2 的顶层服务
+		// conversationEvents 在 alpha.1 已并入 @deepseek-ai/dsh-client-ui-conversation
+		// 提供的 uiConversation 服务（.events = ConversationEventRegistry，契约
+		// match/start/update/buildViewNode 与原版完全一致）。上游 0.1.14 面向
+		// 更新内核（需 dsh-client-runtime），alpha.1 同样没有 —— 故本地适配。
 		const inject = [
-			"conversationEvents",
+			"uiConversation",
 			"slots",
 			"sessions",
 			"locale"
@@ -2150,13 +2155,23 @@ window.__ModuleLoader__.load({
 				name: "conversation.chat.commandview",
 				key: "agent-teams"
 			}, HiddenAgentTeamsCommand));
-			ctx.conversationEvents.register(agentTeamsCardDefinition);
+			const conversationEvents = (ctx.uiConversation && ctx.uiConversation.events)
+				? ctx.uiConversation.events
+				: ctx.conversationEvents;
+			if (conversationEvents && typeof conversationEvents.register === 'function') {
+				conversationEvents.register(agentTeamsCardDefinition);
+			} else {
+				console.warn('agent-teams: conversation definition registry unavailable; team card disabled');
+			}
 			ctx.slots.inject("conversation.chat.node", () => ctx.slots.register({
 				name: "conversation.chat.node",
 				key: "agent-teams",
 				locale: AGENT_TEAMS_LOCALE_NAMESPACE,
 				inject: () => ({ openMember })
 			}, AgentTeamsCard));
+			// 对话框可见入口已并入 dsh-raw-html 的「更多模式」菜单
+			// （conversation.input.right 槽「模式」芯片 → AgentTeams 团队模式行），
+			// 本插件不再重复挂 composer dock 按钮。
 		}
 		//#endregion
 		exports.apply = apply;

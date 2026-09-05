@@ -20,6 +20,9 @@
 ;         展开成 ""path" 导致 spawn 静默失败；_?= 必须裸写 —— NSIS 卸载器原样
 ;         取命令行剩余串当目录，带引号反而失效（实测退出码 2、零删除），
 ;         含空格目录无需引号；尾反斜杠先剥防边界歧义。
+;      d) UninstallString 仅整串被一对引号包裹才剥对，`"path" args` 形态保持
+;         原值走脏值分支（防剥坏）；e) InstallLocation 为空时跳过 ExecWait
+;         （_?= 空目录未定义），只清注册表键。
 
 ; 注意：currentUser 安装器对 HKLM 通常只有读权限，删除 HKLM 键会静默失败
 ; （NSIS DeleteRegKey 无错误返回）。该路径为 best-effort：尽力卸载旧文件并
@@ -28,12 +31,29 @@
 !macro DSH_TakeoverOldShell HIVE KEYNAME
   ReadRegStr $0 ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "UninstallString"
   ${If} $0 != ""
-    ; UninstallString 常带整串引号：剥掉再判存。
+    ; UninstallString 剥引号（窄修）：仅当整串恰被一对引号包裹（引号总数为 2
+    ; 且首尾各一）才整体剥对 —— `"path" args` 形态若沿用旧的「删首字符 + StrCpy
+    ; -1 删尾字符」会剥成 `path" arg` 的脏值；此时保持 $0 原值，交给下方
+    ; FileExists 脏值分支兜底。NSIS 无内建子串搜索，引号计数用 $R0（工作副本，
+    ; 逐字符右移）/ $R1（计数器）实现。
     StrCpy $3 $0
-    StrCpy $4 $3 1
-    ${If} $4 == '"'
-      StrCpy $3 $3 "" 1
-      StrCpy $3 $3 -1
+    StrCpy $R0 $0
+    StrCpy $R1 0
+    ${Do}
+      StrCpy $4 $R0 1
+      ${If} $4 == '"'
+        IntOp $R1 $R1 + 1
+      ${EndIf}
+      StrCpy $R0 $R0 "" 1
+    ${LoopUntil} $R0 == ""
+    ${If} $R1 == 2
+      StrCpy $4 $3 1
+      StrCpy $R0 $3 1 -1
+      ${If} $4 == '"'
+      ${AndIf} $R0 == '"'
+        StrCpy $3 $3 "" 1
+        StrCpy $3 $3 -1
+      ${EndIf}
     ${EndIf}
     ; InstallLocation 剥引号防御（_?= 需要目录路径）。
     ReadRegStr $1 ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "InstallLocation"
@@ -58,8 +78,14 @@
       ; spawn 失败（R6 实测复现）。_?= 必须裸写不加引号：NSIS 卸载器原样
       ; 取命令行剩余串当安装目录，带引号会内嵌字面 " 而静默失效（实测退出码 2、
       ; 零删除）；也正因原样取剩余，含空格目录无需引号（官方文档示例 _?=$INSTDIR）。
-      ExecWait '"$3" /S _?=$1' $R0
-      DetailPrint "DSH EAC: 旧壳卸载退出码 $R0"
+      ; $1（InstallLocation）为空时 _?= 空目录行为未定义 —— 跳过卸载器调用，
+      ; 只清注册表键（下方 DeleteRegKey 兜底）。
+      ${If} $1 == ""
+        DetailPrint "DSH EAC: 旧壳 InstallLocation 为空，跳过卸载器调用，仅清理注册表"
+      ${Else}
+        ExecWait '"$3" /S _?=$1' $R0
+        DetailPrint "DSH EAC: 旧壳卸载退出码 $R0"
+      ${EndIf}
     ${Else}
       DetailPrint "DSH EAC: 旧壳卸载键为脏值（卸载器缺失），仅清理注册表"
     ${EndIf}
@@ -78,6 +104,44 @@
   DetailPrint "DSH EAC: 结束运行中的 ${EXENAME} 进程树（升级需独占安装文件）"
   nsExec::ExecToLog 'taskkill /F /T /IM "${EXENAME}"'
   Pop $R1
+!macroend
+
+;   4. 安装形态选择（v5.4 单发行版双形态）：同一个安装包，安装时选
+;      「完整版 / 精简版」。PREINSTALL 弹窗询问（静默安装 /S 默认完整版），
+;      POSTINSTALL 把选择写入 $INSTDIR\dsh-desktop\profile.txt；companion-sync
+;      启动时读取，精简版仅改变外围插件的「新行默认启停」（用户选择优先，
+;      随时可在设置里启用全部）。文件缺失/脏值 = 完整版，永不阻塞启动。
+Var DshProfileChoice
+
+!macro DSH_AskInstallProfile
+  StrCpy $DshProfileChoice "full"
+  ; 本文件禁用任何管道符（installer-nsh-pipe 守护测试）：MessageBox 组合标志
+  ; 需要管道符，故只用单一 MB_YESNO，不叠加图标位。
+  MessageBox MB_YESNO \
+    "请选择要安装的版本：$\n$\n\
+    【是】完整版 —— 全部内置插件（多智能体 / 手机桥 / 桌宠等）$\n\
+    【否】精简版 —— 精选插件，界面更简洁（后续可在「设置 → 插件 → 管理」$\n\
+    一键启用全部功能，无需重装）$\n$\n\
+    升级安装会重新询问，用户数据不受影响。" \
+    /SD IDYES IDYES dsh_profile_full IDNO dsh_profile_lite
+  dsh_profile_full:
+    StrCpy $DshProfileChoice "full"
+    Goto dsh_profile_done
+  dsh_profile_lite:
+    StrCpy $DshProfileChoice "lite"
+  dsh_profile_done:
+!macroend
+
+!macro DSH_WriteProfileMarker
+  ClearErrors
+  FileOpen $R9 "$INSTDIR\dsh-desktop\profile.txt" w
+  ${If} ${Errors}
+    DetailPrint "DSH EAC: 写入安装形态标记失败（按默认完整版处理）"
+  ${Else}
+    FileWrite $R9 "$DshProfileChoice"
+    FileClose $R9
+    DetailPrint "DSH EAC: 安装形态 = $DshProfileChoice"
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
@@ -99,7 +163,14 @@
   !insertmacro DSH_TakeoverOldShell HKLM "Deepseek Harness EAC"
   !insertmacro DSH_TakeoverOldShell HKLM "com.deepseek.dsh.desktop"
   !insertmacro DSH_TakeoverOldShell HKLM "com.deepseek.dsh.desktop.tauri"
+  ; 不在安装/升级阶段删除 ~/.dsh 下的任何用户数据。退役 dsh-stt 的插件行与
+  ; profile 包副本仍由应用内的精确迁移处理；模型缓存可能是 CLI 或其他产品
+  ; 共用资产，只能由用户明确确认后单独清理。
+  ; 安装形态：解压前询问（精简版/完整版），选择暂存到 $DshProfileChoice。
+  !insertmacro DSH_AskInstallProfile
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; 资源已解压到 $INSTDIR\dsh-desktop\，覆盖随包默认的 profile.txt（full）。
+  !insertmacro DSH_WriteProfileMarker
 !macroend

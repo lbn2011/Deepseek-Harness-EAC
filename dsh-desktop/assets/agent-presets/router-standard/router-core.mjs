@@ -160,14 +160,20 @@ export function clamp01(v) {
   return Math.min(1, Math.max(0, Number(v) || 0))
 }
 
+const ROUTER_PERSONA_SECTIONS = new Set([
+  'persona',
+  'deployment:persona',
+  'router-persona',
+])
+
 /**
- * Replace only the persona section of an assembled section list, keeping
- * everything else — the plan-mode section above all, which is toggled per
- * plan state and carries the plan-boundary instructions.
+ * Replace only the preset-owned persona section of an assembled section
+ * list. Global contributors such as dsh-soul-md's `soul:persona` must remain
+ * so a user persona card can compose with the router guidance.
  */
 export function applyPersona(sections, personaText) {
   const rest = (sections || []).filter(
-    (section) => section.name !== 'persona' && !/persona/i.test(section.name),
+    (section) => !ROUTER_PERSONA_SECTIONS.has(section.name),
   )
   return [...rest, { name: 'router-persona', text: personaText, order: 0 }]
 }

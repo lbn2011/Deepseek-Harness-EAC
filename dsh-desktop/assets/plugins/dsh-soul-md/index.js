@@ -21,7 +21,8 @@ import { readFileSync, watch } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+// 0.1.3：dsh-settings 移除两个独立导出 —— 改走内嵌兼容垫片（行为逐行一致）。
+import { installSettingsSection, settingsNamespace } from "./vendor/settings-compat.js";
 import { ensureSettingsNamespaceExposed } from "./vendor/dsh-settings-expose.js";
 
 /** Cordis plugin name. */
@@ -153,11 +154,12 @@ function apply(ctx, config) {
     },
   });
 
-  // dsh-host-apiproxy hard-codes which settings namespaces the Web client may
-  // see; without this, the settings section answers `settings-not-exposed`
-  // on any stock install. Patch the allowlist idempotently (self-heals after
-  // dsh updates overwrite the file).
-  ensureSettingsNamespaceExposed(ctx, "soul-md", ctx.logger);
+  // 内核 0.1.2 起 settings-controller 的 describe() 枚举全部注册命名空间，
+  // rc.2 时代的 dsh-host-apiproxy WEB_SETTINGS_NAMESPACES 白名单（连同整个
+  // apiproxy 包）已被移除——第三方命名空间原生可见，本补丁随之退役。
+  // 保留调用（老内核回退时仍生效；新内核下 findApiproxyIndex 返回 null
+  // 只产生一条 warn，可在老内核注释掉）。
+  // ensureSettingsNamespaceExposed(ctx, "soul-md", ctx.logger);
 }
 
 export { Config, NS, SECTION_NAME, apply, inject, name };

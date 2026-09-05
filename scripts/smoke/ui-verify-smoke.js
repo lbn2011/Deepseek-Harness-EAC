@@ -13,6 +13,13 @@ const http = require('node:http');
 const repo = path.resolve(__dirname, '..', '..');
 const tmpHome = path.join(repo, 'tmp-ui-verify-installed', 'ui-home');
 fs.mkdirSync(tmpHome, { recursive: true });
+// 0.1.3 首启「内测声明」模态（WelcomeNotice）：确认状态持久化在 settings.yaml
+// 的 ui-onboarding 命名空间（welcomeNoticeVersion 精确等值 "2026-08-13.1"，
+// 见 dsh-client-ui-settings-models WelcomeNoticeStore.derive；loopback 浏览器
+// 跟随 durable Host section）。预置确认状态让模态根本不渲染——它的延迟弹出
+// +CSS 哈希类随内核版本漂移，DOM 点击关闭不可靠。
+fs.writeFileSync(path.join(tmpHome, 'settings.yaml'),
+  'ui-onboarding:\n  welcomeNoticeVersion: "2026-08-13.1"\n');
 const CDP_PORT = 9334;
 const EXE = process.env.DSH_SMOKE_EXE || process.argv[2] || path.join(repo, 'tauri-shell', 'target', 'release', 'dsh-eac-shell.exe');
 const SHOTS = path.join(repo, 'tmp-ui-verify-installed', 'shots');
@@ -87,7 +94,9 @@ async function waitForAppReady(client, timeoutMs) {
     try {
       const state = await client.evalJs(`(() => {
         const root = document.querySelector('#root');
-        return { phase: document.querySelector('.wSkVaW_root')?.getAttribute('data-phase') ?? null, hero: !!document.querySelector('.pXSMma_root'), root: !!root };
+        // 0.1.2 起 CSS Modules 哈希前缀随内核版本漂移，改锚稳定契约 data-phase。
+        const phaseEl = document.querySelector('[data-phase]');
+        return { phase: phaseEl ? phaseEl.getAttribute('data-phase') : null, hero: !!document.querySelector('[data-phase="hero"]'), root: !!root };
       })()`);
       if (state && state.root && state.phase !== null) return state;
     } catch { /* 页面还在切换/注入中 */ }
@@ -149,7 +158,8 @@ async function waitForAppReady(client, timeoutMs) {
     await client.call('Emulation.setDeviceMetricsOverride', { width: 1100, height: 470, deviceScaleFactor: 1, mobile: false });
     await sleep(1200);
     const hero = await client.evalJs(`(() => {
-      const card = document.querySelector('.uV2eYG_card'); if (!card) return null;
+      // 0.1.2：输入卡换锚稳定契约 data-composer-card（rc.2 哈希 .uV2eYG_card 已换代）。
+      const card = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]'); if (!card) return null;
       const r = card.getBoundingClientRect();
       return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: innerHeight, topGap: Math.round(r.top - 36), bottomGap: Math.round(innerHeight - r.bottom) };
     })()`);
@@ -160,30 +170,57 @@ async function waitForAppReady(client, timeoutMs) {
     // ---- C) 模型菜单救援：越界 → 翻转向下可见 ----
     // 首启"内测声明"等全局模态（web-frontend ModalRoot，z 1000 遮罩）会盖住整个
     // 应用；真实用户点过「继续」后不再出现，测试前先点掉它。
+    // 0.1.3：哈希类 _root_15u5s/_mask_* 已换代，且模态可能延迟数秒才弹出 ——
+    // 改为结构化轮询：中心点命中 fixed 遮罩 → 就近找模态根点最后一个按钮 →
+    // 循环直至中心点不再命中遮罩（上限 20 次 ≈ 10s）。
     const modalDismiss = await client.evalJs(`(async () => {
       const wait = (ms) => new Promise((res) => setTimeout(res, ms));
-      const root = Array.from(document.querySelectorAll('[class*="_root_15u5s"]'))
-        .find((el) => { const r = getComputedStyle(el); return r.position === 'fixed' && r.zIndex === '1000'; });
-      if (!root) return 'none';
-      const btns = Array.from(root.querySelectorAll('button'));
-      const target = btns[btns.length - 1] || btns[0];
-      if (!target) return 'no-button';
-      target.click();
-      await wait(600);
-      return Array.from(document.querySelectorAll('[class*="_root_15u5s"]'))
-        .some((el) => { const r = getComputedStyle(el); return r.position === 'fixed' && r.zIndex === '1000'; }) ? 'still-open' : 'dismissed';
+      const centerMask = () => {
+        const hit = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight / 2));
+        if (!hit) return null;
+        const cls = typeof hit.className === 'string' ? hit.className : '';
+        return cls.includes('_mask_') || cls.includes('mask_') ? hit : null;
+      };
+      const modalRootOf = (maskEl) => {
+        // 遮罩的兄弟层是内容根：向上找 fixed 高层容器，再退回遮罩父级。
+        let el = maskEl;
+        for (let i = 0; i < 5 && el; i += 1) {
+          const s = getComputedStyle(el);
+          if (s.position === 'fixed' && Number(s.zIndex) >= 100 && el.querySelector('button')) return el;
+          el = el.parentElement;
+        }
+        return maskEl.parentElement;
+      };
+      let dismissed = 0;
+      for (let i = 0; i < 20; i += 1) {
+        const mask = centerMask();
+        if (!mask) break;
+        const root = modalRootOf(mask);
+        const btns = root ? Array.from(root.querySelectorAll('button')) : [];
+        const target = btns[btns.length - 1] || btns[0];
+        if (!target) { await wait(500); continue; }
+        target.click();
+        dismissed += 1;
+        await wait(500);
+      }
+      return dismissed === 0 ? 'none' : 'dismissed';
     })()`);
     check('C0 关闭首启模态（若有）', modalDismiss === 'none' || modalDismiss === 'dismissed', String(modalDismiss));
     const menu = await client.evalJs(`(async () => {
       const wait = (ms) => new Promise((res) => setTimeout(res, ms));
-      const trailing = document.querySelector('.uV2eYG_trailing'); if (!trailing) return null;
+      // 0.1.2：composer 尾部容器改锚 data-composer-seat / data-composer-card
+      //（rc.2 哈希 .uV2eYG_trailing 已换代）；注入 root 自带 position:relative，
+      // 绝对定位菜单几何不再依赖宿主容器的定位方式。
+      const seat = document.querySelector('[data-composer-seat]') || document.querySelector('[data-composer-card]');
+      if (!seat) return null;
       if (document.getElementById('g3-fake-model-menu')) return { already: true };
       const root = document.createElement('div');
+      root.id = 'g3-fake-model-root';
       root.className = '_7KE1Ra_root';
       root.style.cssText = 'min-width:0;position:relative;margin-left:auto;';
       root.innerHTML = '<button id="g3-fake-trigger" style="width:220px;height:28px;">模型(模拟)</button>' +
-        '<div id="g3-fake-model-menu" class="_7KE1Ra_menu" style="z-index:20;position:absolute;bottom:calc(100% + 8px);right:0;width:280px;height:360px;background:#1b2438;border:1px solid rgba(255,255,255,.35);border-radius:12px;"></div>';
-      trailing.appendChild(root);
+        '<div id="g3-fake-model-menu" class="_7KE1Ra_menu ra1x4W_menu" style="z-index:20;position:absolute;bottom:calc(100% + 8px);right:0;width:280px;height:360px;background:#1b2438;border:1px solid rgba(255,255,255,.35);border-radius:12px;"></div>';
+      seat.appendChild(root);
       await wait(900); // 等 bridge rescue 的 MutationObserver + 翻转生效
       const m = document.getElementById('g3-fake-model-menu');
       const r = m.getBoundingClientRect();
@@ -202,18 +239,25 @@ async function waitForAppReady(client, timeoutMs) {
           onMask: hit ? cls.includes('_mask_') : false,
           hitIsMenu: hit === m || (hit && hit.closest && Boolean(hit.closest('#g3-fake-model-menu'))),
           hitClass: hit ? ((hit.id ? '#' + hit.id : '') + '.' + cls + hit.tagName) : 'null',
-          seatVis: (() => { const s = m.closest('.wSkVaW_composerSeat'); return s ? getComputedStyle(s).visibility : null; })(),
+          seatVis: (() => { const s = m.closest('[data-composer-seat]'); return s ? getComputedStyle(s).visibility : null; })(),
         };
       };
       let p = probeInfo();
-      if (p.onMask) {
-        const root = Array.from(document.querySelectorAll('[class*="_root_15u5s"]'))
-          .find((el) => { const s = getComputedStyle(el); return s.position === 'fixed' && s.zIndex === '1000'; });
-        if (root) {
-          const btns = Array.from(root.querySelectorAll('button'));
-          (btns[btns.length - 1] || btns[0])?.click?.();
-          await wait(700);
+      // C3 兜底（0.1.3 模态延迟弹出）：中心点命中遮罩 → 结构化轮询点击模态
+      // 根的最后一个按钮直至遮罩消失（与 C0 同策略；上限 10 次 ≈ 5s）。
+      for (let round = 0; round < 10 && p.onMask; round += 1) {
+        const maskEl = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight / 2));
+        if (!maskEl) break;
+        let root = null;
+        for (let el = maskEl, i = 0; i < 5 && el; i += 1) {
+          const s = getComputedStyle(el);
+          if (s.position === 'fixed' && Number(s.zIndex) >= 100 && el.querySelector('button')) { root = el; break; }
+          el = el.parentElement;
         }
+        const btns = (root || maskEl.parentElement)?.querySelectorAll('button') || [];
+        (btns[btns.length - 1] || btns[0])?.click?.();
+        await wait(500);
+        p = probeInfo();
       }
       for (let attempt = 0; attempt < 4 && !p.hitIsMenu && !p.onMask; attempt++) {
         await wait(450);
@@ -222,13 +266,112 @@ async function waitForAppReady(client, timeoutMs) {
       return {
         flipped, maxH, rect, hitIsMenu: p.hitIsMenu, onMask: p.onMask, hitClass: p.hitClass, seatVis: p.seatVis,
         triggerRect: (() => { const t = document.getElementById('g3-fake-trigger'); if (!t) return null; const r = t.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }; })(),
-        trailingRect: (() => { const t = document.querySelector('.uV2eYG_trailing'); if (!t) return null; const r = t.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), visible: getComputedStyle(t).display !== 'none' }; })(),
+        trailingRect: (() => { const t = document.getElementById('g3-fake-model-root'); if (!t) return null; const r = t.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), visible: getComputedStyle(t).display !== 'none' }; })(),
       };
     })()`);
     check('C1 越界菜单被翻转向下（dsh-popup-flip）', menu && menu.flipped === true, JSON.stringify(menu && { flipped: menu.flipped, maxH: menu.maxH, rect: menu.rect, trigger: menu.triggerRect, trailing: menu.trailingRect }));
     check('C2 菜单顶部 ≥ 36 不再出视口', menu && menu.rect && menu.rect.top >= 36, JSON.stringify(menu && menu.rect));
-    check('C3 菜单顶角像素命中菜单自身（未被遮挡）', menu && menu.hitIsMenu === true);
+    check('C3 菜单顶角像素命中菜单自身（未被遮挡）', menu && menu.hitIsMenu === true, JSON.stringify(menu && { hitIsMenu: menu.hitIsMenu, onMask: menu.onMask, hitClass: menu.hitClass, seatVis: menu.seatVis }));
     await client.shot('g3-model-menu-flip.png');
+
+    // ---- D) 悬停浮层横向溢出（提示词优化按钮 hover / 「/」命令菜单同款病灶） ----
+    // hero 态滚动体内核只设 overflow-y、x 轴未裁剪，absolute 弹出面板向上展开即把
+    // 页面撑出横向滚动条，且面板常驻挂载、移出后不恢复。5.1.2 垫片把 hero 滚动体与
+    // body 的 x 轴钉死 + 插件面板改 fixed 定位。D 组用真实鼠标移动 hover 触发钮、
+    // 再注入 320px 绝对定位浮层，断言四个时刻都无横向溢出且输入卡完整可见。
+    await client.evalJs(`(() => {
+      window.__dshOverflowProbe = function (label) {
+        // 0.1.2：滚动体/输入卡换锚稳定契约（rc.2 哈希 .wSkVaW_scrollBody/.uV2eYG_card 已换代）。
+        const scrollBody = document.querySelector('[data-conversation-scroll]');
+        const de = document.documentElement;
+        const sw = Math.max(document.body.scrollWidth, de.scrollWidth);
+        const card = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]');
+        const cr = card ? card.getBoundingClientRect() : null;
+        const panelEl = document.querySelector('.webui-po-panel');
+        return {
+          label,
+          overflowX: sw - de.clientWidth,
+          bodyScrollW: document.body.scrollWidth,
+          docScrollW: de.scrollWidth,
+          clientW: de.clientWidth,
+          scrollBodyOX: scrollBody ? getComputedStyle(scrollBody).overflowX : null,
+          panelOpen: !!panelEl && panelEl.classList.contains('webui-po-panel-open'),
+          card: cr ? { top: Math.round(cr.top), bottom: Math.round(cr.bottom), inView: cr.top >= 0 && cr.bottom <= innerHeight } : null,
+          trigger: (() => { const t = document.querySelector('.webui-po-trigger'); if (!t) return null; const r = t.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })(),
+        };
+      };
+      return true;
+    })()`);
+    const base = await client.evalJs(`window.__dshOverflowProbe('base')`);
+    check('D1 hero 基线无横向溢出', base && base.overflowX <= 1, JSON.stringify(base));
+    // 真实触发钮只在活跃会话输入行才挂载（hero 布局不渲染 conversation.input.right
+    // slot）；找不到时注入「修复前的旧版几何」模拟面板（absolute 向上展开 320px），
+    // 等价验证同一回归：旧布局 hover 后绝不能再撑出横向溢出。
+    let hoverPoint = base && base.trigger;
+    let realHover = !!hoverPoint;
+    if (!hoverPoint) {
+      const injected = await client.evalJs(`(() => {
+        const seat = document.querySelector('[data-composer-seat]') || document.querySelector('[data-composer-card]'); if (!seat) return false;
+        // 注入自带 position:relative 的宿主，绝对定位面板几何不依赖内核容器。
+        const host = document.createElement('div');
+        host.id = 'g3-fake-po-host';
+        host.style.cssText = 'position:relative;display:inline-block;margin-left:auto;';
+        const btn = document.createElement('button');
+        btn.id = 'g3-fake-po-trigger';
+        btn.style.cssText = 'width:28px;height:28px;';
+        const panel = document.createElement('div');
+        panel.className = 'webui-po-panel webui-po-panel-open';
+        panel.style.cssText = 'position:absolute;bottom:calc(100% + 10px);right:0;width:320px;height:200px;background:#1b2438;border:1px solid rgba(255,255,255,.35);border-radius:12px;';
+        host.appendChild(btn);
+        host.appendChild(panel);
+        seat.appendChild(host);
+        return true;
+      })()`);
+      if (injected) {
+        const p = await client.evalJs(`(() => {
+          const t = document.getElementById('g3-fake-po-trigger'); if (!t) return null;
+          const r = t.getBoundingClientRect();
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        })()`);
+        hoverPoint = p;
+        await client.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, button: 'none' });
+        await sleep(400);
+      }
+    } else {
+      await client.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverPoint.x, y: hoverPoint.y, button: 'none' });
+      await sleep(700);
+    }
+    const during = await client.evalJs(`window.__dshOverflowProbe('during')`);
+    check('D2 悬停提示词优化（面板打开）无横向溢出', during && during.overflowX <= 1 && during.panelOpen === true, JSON.stringify({ realHover, ...during }));
+    // 注入式绝对定位浮层（「/」命令菜单同款）：320px 宽向上展开。
+    await client.evalJs(`(() => {
+      const seat = document.querySelector('[data-composer-seat]') || document.querySelector('[data-composer-card]');
+      if (!seat) return false;
+      const host = document.createElement('div');
+      host.id = 'g3-fake-slash-host';
+      host.style.cssText = 'position:relative;display:inline-block;margin-left:auto;';
+      const fake = document.createElement('div');
+      fake.id = 'g3-fake-slash-menu';
+      fake.style.cssText = 'position:absolute;bottom:calc(100% + 10px);right:0;width:320px;height:240px;background:#1b2438;border-radius:12px;z-index:80;';
+      host.appendChild(fake);
+      seat.appendChild(host);
+      return true;
+    })()`);
+    await sleep(300);
+    const withFake = await client.evalJs(`window.__dshOverflowProbe('withFake')`);
+    check('D4 绝对定位浮层（/ 命令菜单同款）无横向溢出', withFake && withFake.overflowX <= 1, JSON.stringify(withFake));
+    await client.evalJs(`(() => { const f = document.getElementById('g3-fake-slash-host'); if (f) f.remove(); return true; })()`);
+    if (hoverPoint) {
+      await client.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 30, y: 300, button: 'none' });
+      await sleep(600);
+    }
+    const after = await client.evalJs(`window.__dshOverflowProbe('after')`);
+    check('D3 移出鼠标后仍无横向溢出（面板已收起）', after && after.overflowX <= 1 && (realHover ? after.panelOpen === false : true), JSON.stringify({ realHover, ...after }));
+    check('D5 hero 输入卡全程完整可见', base && during && withFake && after &&
+      base.card && during.card && withFake.card && after.card &&
+      [base.card, during.card, withFake.card, after.card].every((c) => c.inView === true),
+      JSON.stringify({ base: base && base.card, during: during && during.card, after: after && after.card }));
+    await client.shot('g3-hover-overflow.png');
 
     console.log(failures === 0 ? '\n[ui-verify] PASS' : `\n[ui-verify] FAIL (${failures})`);
     client.close();

@@ -29,6 +29,7 @@ const CONTEXT_ROUTE = "/api/dsh-side-session/context";
 const ASK_ROUTE = "/api/dsh-side-session/ask";
 
 const DEFAULT_BASE = "https://api.deepseek.com";
+const DEFAULT_DIRECT_MODEL = "deepseek-chat";
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_PROVIDER = "deepseek-official";
 
@@ -55,7 +56,7 @@ const MAX_TRANSCRIPT_CHARS = 40 * 1024; // 标准档字符上限（兼容引用�
 const Config = z.object({
   mode: z
     .string()
-    .default("1")
+    .default("3")
     .description(
       "回答引擎模式：1=复用 dsh 全局 Key；2=插件自带 Key；3=纯服务端走 dsh 宿主 LLM（ctx.llm，不读任何 key）"
     ),
@@ -100,16 +101,32 @@ function readGlobalKey() {
   return "";
 }
 
-// 锚定 agent-default-model 段取 model（与 balance.readActiveModel 行为一致，
-// 但额外锚定命名空间以避免其他 model: 键误读）。
-function readGlobalModel() {
+function parseAgentDefaultRoute(text) {
+  const block = String(text || "").match(
+    /(?:^|\r?\n)agent-default-model:\s*\r?\n((?:[ \t]+[^\r\n]*(?:\r?\n|$))*)/
+  );
+  const body = block ? block[1] : "";
+  const provider = body.match(/^\s*provider:\s*(\S+)/m);
+  const model = body.match(/^\s*model:\s*(\S+)/m);
+  const reasoningEffort = body.match(/^\s*reasoningEffort:\s*(\S+)/m);
+  return {
+    provider: provider ? provider[1] : "",
+    model: model ? model[1] : "",
+    reasoningEffort: reasoningEffort ? reasoningEffort[1] : "",
+  };
+}
+
+function readGlobalRoute() {
   try {
     const text = readFileSync(join(dshHome(), "settings.yaml"), "utf8");
-    // 仅锚定 agent-default-model 段内的 model: 行，避免误读其它命名空间的 model 键
-    const anchored = text.match(/agent-default-model:[\s\S]*?^\s*model:\s*(\S+)/m);
-    if (anchored) return anchored[1];
+    const route = parseAgentDefaultRoute(text);
+    if (route.provider && route.model) return route;
   } catch {}
-  return DEFAULT_MODEL;
+  return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL, reasoningEffort: "" };
+}
+
+function readGlobalModel() {
+  return readGlobalRoute().model;
 }
 
 function globalBase() {
@@ -271,8 +288,8 @@ const EMPTY = {
   files: [],
   transcript: [],
   truncated: false,
-  provider: DEFAULT_PROVIDER,
-  model: DEFAULT_MODEL,
+  provider: "",
+  model: "",
 };
 
 const parseCache = new Map(); // 文件 -> { mtimeMs, size, firstMagic, frameEnd, at, state }
@@ -375,6 +392,7 @@ function decompressFrames(buf, from) {
 /** 把累计状态渲染为对外结果（按档位截断，与全量解析一致）。 */
 function renderState(state) {
   const L = ctxLen();
+  const fallbackRoute = readGlobalRoute();
   let transcript = state.transcript;
   let chars = transcript.reduce((n, m) => n + m.text.length, 0);
   if (chars > L.chars) {
@@ -399,8 +417,8 @@ function renderState(state) {
     files,
     transcript,
     truncated,
-    provider: state.provider || DEFAULT_PROVIDER,
-    model: state.model || readGlobalModel(),
+    provider: state.provider || fallbackRoute.provider,
+    model: state.model || fallbackRoute.model,
   };
 }
 
@@ -531,14 +549,64 @@ function buildFileContext(sessionId) {
   );
 }
 
-// 将客户端消息拆分为「客户端 system」+「其余消息」，并拼上文件上下文块
+// 取消息文本（content 为 string 或 [{type:"text",text}] 数组均兼容）
+function msgContentText(m) {
+  const content = m && m.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part && typeof part.text === "string" ? part.text : ""))
+      .join("");
+  }
+  return "";
+}
+
+// 将旧轮次折叠进 system，只把最后一条用户消息交给宿主 LLM。
+// 宿主不接受插件传入的 assistant 历史结构，直接透传会触发 kind 读取错误。
 function buildFinalPrompt(body) {
   const msgs = Array.isArray(body.messages) ? body.messages : [];
   const firstIsSystem = msgs.length && msgs[0] && msgs[0].role === "system";
-  const clientSystem = firstIsSystem ? String(msgs[0].content || "") : "";
-  const rest = firstIsSystem ? msgs.slice(1) : msgs;
+  const clientSystem = firstIsSystem ? msgContentText(msgs[0]) : "";
   const fileBlock = buildFileContext(String(body.sessionId || "").trim());
-  const system = (fileBlock ? fileBlock + "\n\n" : "") + clientSystem;
+
+  const allMessages = (firstIsSystem ? msgs.slice(1) : msgs)
+    .filter((message) => msgContentText(message).length > 0);
+  let lastUserIndex = -1;
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    if (allMessages[i] && allMessages[i].role === "user") {
+      lastUserIndex = i;
+      break;
+    }
+  }
+
+  let rest = [];
+  let prior = [];
+  if (lastUserIndex >= 0) {
+    rest = [allMessages[lastUserIndex]];
+    prior = allMessages.slice(0, lastUserIndex);
+  } else if (allMessages.length > 0) {
+    rest = [allMessages[allMessages.length - 1]];
+    prior = allMessages.slice(0, -1);
+  }
+
+  let contextBlock = "";
+  if (prior.length > 0) {
+    const lines = prior.map((message) => {
+      const tag = message.role === "assistant"
+        ? "助手"
+        : message.role === "user"
+          ? "用户"
+          : (message.role || "消息");
+      return "[" + tag + "] " + msgContentText(message);
+    });
+    contextBlock = "==== 临时会话上下文 ====\n" + lines.join("\n");
+  }
+
+  const systemParts = [];
+  if (fileBlock) systemParts.push(fileBlock);
+  if (contextBlock) systemParts.push(contextBlock);
+  if (clientSystem) systemParts.push(clientSystem);
+  const system = systemParts.join("\n\n");
   return { system, rest };
 }
 
@@ -643,26 +711,95 @@ function resolveKeyForMode(mode, settings) {
     ).replace(/\/+$/, "") || DEFAULT_BASE;
     return { key, model, base: endpoint, source: "plugin" };
   }
+  const route = readGlobalRoute();
   return {
     key: readGlobalKey(),
-    model: readGlobalModel(),
+    model: route.provider === DEFAULT_PROVIDER ? route.model : DEFAULT_DIRECT_MODEL,
     base: globalBase(),
     source: "global",
   };
 }
 
+function validRoute(value) {
+  return value && typeof value.provider === "string" && value.provider.trim()
+    && typeof value.model === "string" && value.model.trim();
+}
+
+function liveSessionRoute(sessionId) {
+  if (!sessionId || !ctxRef || !ctxRef.agents || typeof ctxRef.agents.get !== "function") return null;
+  const agent = ctxRef.agents.get(sessionId);
+  if (!agent) return null;
+
+  try {
+    const selection = ctxRef.sessionProjections.stateOf(agent.session, "modelSelection");
+    const route = selection && (selection.pending || selection.lastUsed);
+    if (validRoute(route)) return route;
+  } catch {}
+
+  try {
+    const header = agent.session.requestHeader();
+    if (validRoute(header && header.config)) return header.config;
+  } catch {}
+
+  return validRoute(agent.options) ? agent.options : null;
+}
+
+function hostDefaultRoute() {
+  try {
+    const route = ctxRef.agentDefaultModel.currentSelection();
+    if (validRoute(route)) return route;
+  } catch {}
+  return readGlobalRoute();
+}
+
+function resolveHostRoute(sessionId, body, parsed) {
+  const live = liveSessionRoute(sessionId);
+  if (validRoute(live)) return live;
+  if (validRoute(body)) return body;
+  if (validRoute(parsed)) return parsed;
+  return hostDefaultRoute();
+}
+
+function errorMessage(error) {
+  return String(
+    (error && error.failure && error.failure.message)
+      || (error && error.message)
+      || error
+      || "未知错误"
+  );
+}
+
+function errorStatus(error, fallback = 502) {
+  const raw = Number(
+    (error && error.failure && error.failure.status)
+      || (error && error.status)
+  );
+  return Number.isInteger(raw) && raw >= 400 && raw <= 599 ? raw : fallback;
+}
+
 async function handleAskMode3(req, res, body, sessionId) {
-  if (!ctxRef || !ctxRef.llm || typeof ctxRef.llm.stream !== "function") {
+  if (!ctxRef || !ctxRef.llm || typeof ctxRef.llm.prepareCall !== "function") {
     sendJson(res, 500, { error: "宿主 LLM 服务(ctx.llm)当前不可用" });
     return;
   }
   const { system, rest } = buildFinalPrompt(body);
   const parsed = parseSession(sessionId);
-  const provider = String(body.provider || parsed.provider || DEFAULT_PROVIDER);
-  const model = String(body.model || parsed.model || readGlobalModel());
+  const route = resolveHostRoute(sessionId, body, parsed);
+  let prepared;
+  try {
+    prepared = await ctxRef.llm.prepareCall({
+      provider: route.provider,
+      model: route.model,
+      ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
+    });
+  } catch (err) {
+    const message = errorMessage(err);
+    sendJson(res, errorStatus(err), { error: message, message });
+    return;
+  }
   const llmMessages = rest.map((m) => ({
     role: m.role,
-    content: [{ type: "text", text: String(m.content || "") }],
+    content: [{ type: "text", text: msgContentText(m) }],
   }));
 
   res.writeHead(200, {
@@ -671,7 +808,11 @@ async function handleAskMode3(req, res, body, sessionId) {
     connection: "keep-alive",
   });
   try {
-    const stream = ctxRef.llm.stream({ provider, model, system, messages: llmMessages });
+    const stream = prepared.stream({
+      ...prepared.config,
+      system,
+      messages: llmMessages,
+    });
     for await (const chunk of stream) {
       if (!chunk) continue;
       if (chunk.type === "text-delta" && typeof chunk.text === "string") {
@@ -683,8 +824,9 @@ async function handleAskMode3(req, res, body, sessionId) {
           "data: " + JSON.stringify({ error: String(chunk.message || chunk.error || "宿主 LLM 错误") }) + "\n\n"
         );
       } else if (chunk.type === "finish" && chunk.reason && chunk.reason.kind === "error") {
+        const message = errorMessage(chunk.reason);
         res.write(
-          "data: " + JSON.stringify({ error: String((chunk.reason && chunk.reason.message) || "宿主 LLM 流结束于错误") }) + "\n\n"
+          "data: " + JSON.stringify({ error: message }) + "\n\n"
         );
       }
     }
@@ -694,7 +836,7 @@ async function handleAskMode3(req, res, body, sessionId) {
     try {
       res.write(
         "data: " +
-          JSON.stringify({ error: String((err && err.message) || err) }) +
+          JSON.stringify({ error: errorMessage(err) }) +
           "\n\n"
       );
       res.write("data: [DONE]\n\n");
@@ -723,7 +865,7 @@ async function handleAsk(req, res) {
     sendJson(res, 400, { error: "invalid JSON body" });
     return;
   }
-  const mode = String(body.mode || "1");
+  const mode = String(body.mode || "3");
   const sessionId = String(body.sessionId || "").trim();
   const messages = Array.isArray(body.messages) ? body.messages : [];
   if (messages.length === 0) {
@@ -768,9 +910,9 @@ async function handleAsk(req, res) {
   }
   if (!upstream.ok) {
     const hint = await upstream.text().catch(() => "");
-    sendJson(res, 502, {
-      error: "上游返回 " + upstream.status + (hint ? "：" + hint.slice(0, 300) : ""),
-    });
+    const status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
+    const message = "上游返回 " + upstream.status + (hint ? "：" + hint.slice(0, 300) : "");
+    sendJson(res, status, { error: message, message });
     return;
   }
   // 透传 SSE
@@ -809,7 +951,7 @@ let lastSettings = {};
 let ctxRef = null;
 
 const name = "@dsh-external/dsh-side-session";
-const inject = ["settings", "webServer", "llm"];
+const inject = ["settings", "webServer", "llm", "agents", "sessionProjections", "agentDefaultModel"];
 
 function apply(ctx, config) {
   ctxRef = ctx;
@@ -898,4 +1040,12 @@ function apply(ctx, config) {
   };
 }
 
-export { apply, inject, name, parseSession, resetParseCacheForTest };
+export {
+  apply,
+  buildFinalPrompt,
+  inject,
+  name,
+  parseAgentDefaultRoute,
+  parseSession,
+  resetParseCacheForTest,
+};

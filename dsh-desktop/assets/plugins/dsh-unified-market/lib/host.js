@@ -39,7 +39,7 @@ import { scanCandidate, collectProfileState } from './plugin-conflict-scan.mjs'
 export const name = 'dsh-unified-market'
 
 /** 本市场自身版本（与 package.json 同步；自更新检测用）。 */
-export const SELF_VERSION = '0.3.0'
+export const SELF_VERSION = '0.3.1'
 
 /** Hard dependency: the HTTP carrier must exist before the route registers. */
 export const inject = ['webServer']
@@ -753,6 +753,8 @@ function matchInstalledPackage(plugin, installedState) {
 const REGISTRY_URL = 'https://awesome-dsh-plugin.com/plugins.json'
 /** Static page fallback when the JSON API is unreachable. */
 const CATALOG_PAGE_URL = 'https://awesome-dsh-plugin.com/zh/'
+/** EAC-owned recommendations merged into every catalog source. */
+const EAC_RECOMMENDED_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'eac-recommended.json')
 
 function pickLang(lang) {
   return lang === 'en' ? 'en' : 'zh'
@@ -776,7 +778,80 @@ function fromRegistryPlugin(p, lang) {
     source: cc ? cc.source : null,
     stars: typeof p.stars === 'number' ? p.stars : null,
     added: p.added || null,
+    eacRecommended: p.eacRecommended === true,
   }
+}
+
+function pluginIdentityKeys(plugin) {
+  const keys = []
+  const repo = normalizeRepoUrl(plugin && plugin.url)
+  if (repo) keys.push('repo:' + repo)
+  const source = String((plugin && plugin.source) || '').trim().toLowerCase()
+  if (source) keys.push('source:' + source)
+  const name = String((plugin && plugin.name) || '').trim().toLowerCase()
+  if (name) keys.push('name:' + name)
+  return keys
+}
+
+function loadEacRecommendations(lang) {
+  try {
+    const data = JSON.parse(readFileSync(EAC_RECOMMENDED_PATH, 'utf8'))
+    const locale = pickLang(lang)
+    return Array.isArray(data.plugins) ? data.plugins.map((plugin) => fromRegistryPlugin(plugin, locale)) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Put EAC recommendations first while retaining live metadata for duplicates.
+ * URL, install source, and display name are all treated as stable identities.
+ */
+function mergeRecommendedCatalog(catalog, lang) {
+  const recommended = loadEacRecommendations(lang)
+  if (recommended.length === 0) return catalog
+  const plugins = []
+  const identities = new Map()
+  const append = (plugin, preferred) => {
+    const keys = pluginIdentityKeys(plugin)
+    const duplicate = keys.map((key) => identities.get(key)).find((index) => index !== undefined)
+    if (duplicate !== undefined) {
+      const current = plugins[duplicate]
+      const winner = preferred ? plugin : current
+      const other = preferred ? current : plugin
+      plugins[duplicate] = {
+        ...other,
+        ...winner,
+        stars: winner.stars ?? other.stars ?? null,
+        added: winner.added ?? other.added ?? null,
+        eacRecommended: current.eacRecommended === true || plugin.eacRecommended === true,
+      }
+      for (const key of keys) identities.set(key, duplicate)
+      return
+    }
+    const index = plugins.length
+    plugins.push(plugin)
+    for (const key of keys) identities.set(key, index)
+  }
+  for (const plugin of recommended) append(plugin, true)
+  for (const plugin of Array.isArray(catalog.plugins) ? catalog.plugins : []) append(plugin, false)
+
+  const labels = new Map((catalog.cats || []).filter((cat) => cat.id !== 'all').map((cat) => [cat.id, cat.label]))
+  const categoryOrder = [...labels.keys()]
+  for (const plugin of plugins) {
+    if (labels.has(plugin.cat)) continue
+    labels.set(plugin.cat, plugin.cat === 'skill' ? (pickLang(lang) === 'en' ? 'Skills' : '技能包') : plugin.cat)
+    categoryOrder.push(plugin.cat)
+  }
+  const cats = [
+    { id: 'all', label: pickLang(lang) === 'en' ? 'All' : '全部', count: plugins.length },
+    ...categoryOrder.map((id) => ({
+      id,
+      label: labels.get(id),
+      count: plugins.filter((plugin) => plugin.cat === id).length,
+    })),
+  ]
+  return { plugins, cats }
 }
 
 /** Derive the category chips (incl. the leading "all" chip) from the registry. */
@@ -819,7 +894,7 @@ async function loadCatalog(lang) {
     const r = await fetch(REGISTRY_URL, { redirect: 'follow', signal: AbortSignal.timeout(10000) })
     if (!r.ok) throw new Error('HTTP ' + r.status)
     const data = await r.json()
-    const parsed = registryToCatalog(data, locale)
+    const parsed = mergeRecommendedCatalog(registryToCatalog(data, locale), locale)
     if (parsed.plugins.length === 0) throw new Error('empty registry')
     catalogCache = { at: now, lang: locale, data: parsed }
     return { ...parsed, source: 'live' }
@@ -828,7 +903,7 @@ async function loadCatalog(lang) {
     try {
       const r = await fetch(CATALOG_PAGE_URL, { redirect: 'follow', signal: AbortSignal.timeout(10000) })
       if (!r.ok) throw new Error('HTTP ' + r.status)
-      const parsed = parseSite(await r.text())
+      const parsed = mergeRecommendedCatalog(parseSite(await r.text()), locale)
       if (parsed.plugins.length === 0) throw new Error('empty catalog')
       catalogCache = { at: now, lang: locale, data: parsed }
       return { ...parsed, source: 'live' }
@@ -836,8 +911,12 @@ async function loadCatalog(lang) {
       // 3) Bundled offline snapshot.
       try {
         const snap = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'catalog-snapshot.json'), 'utf8'))
-        if (Array.isArray(snap.plugins) && snap.plugins.length > 0) return { ...snap, source: 'snapshot' }
+        if (Array.isArray(snap.plugins) && snap.plugins.length > 0) {
+          return { ...mergeRecommendedCatalog(snap, locale), source: 'snapshot' }
+        }
       } catch {}
+      const local = mergeRecommendedCatalog({ plugins: [], cats: [] }, locale)
+      if (local.plugins.length > 0) return { ...local, source: 'recommended' }
       return { plugins: [], cats: [], source: 'none' }
     }
   }
@@ -1653,17 +1732,30 @@ const PACKS_CACHE_TTL = 5 * 60 * 1000
 let packsCache = null // { at, packs, source }
 const PACK_UPLOAD_MAX = 128 * 1024 * 1024
 
-function packCliPath() {
+// 定位功能包 CLI，返回 { cli, reason }：cli 为 null 时 reason 给出用户可
+// 行动的原因 —— 区分「桌面壳未注入环境变量」（壳过旧/非桌面端）与「CLI
+// 文件不存在」（客户端安装不完整或版本过旧，需升级/重装客户端）。
+// 0.3.0 及之前两种失败统一误报"缺少 DSH_DESKTOP_RESOURCE_ROOT"，排障困难。
+function packCliStatus() {
   const root = process.env.DSH_DESKTOP_RESOURCE_ROOT
-  if (!root) return null
+  if (!root) {
+    return { cli: null, reason: '功能包 CLI 不可用（桌面壳未注入 DSH_DESKTOP_RESOURCE_ROOT：若在浏览器等非桌面环境请改用桌面客户端，若已在桌面端请升级客户端）' }
+  }
   const cli = join(root, 'scripts', 'feature-pack-cli.js')
-  try { return existsSync(cli) ? cli : null } catch { return null }
+  try {
+    if (existsSync(cli)) return { cli, reason: null }
+  } catch { /* existsSync 异常按缺失处理 */ }
+  return { cli: null, reason: '功能包 CLI 不可用（桌面客户端缺少 ' + cli + '，客户端安装不完整或版本过旧，请升级或重装桌面客户端）' }
+}
+
+function packCliPath() {
+  return packCliStatus().cli
 }
 
 /** 同步跑功能包 CLI（快命令：list/inspect/export/rollback/scan）。 */
 function runPackCli(args) {
-  const cli = packCliPath()
-  if (!cli) return { ok: false, error: '功能包 CLI 不可用（缺少 DSH_DESKTOP_RESOURCE_ROOT，请在桌面壳内使用）' }
+  const { cli, reason } = packCliStatus()
+  if (!cli) return { ok: false, error: reason }
   let r
   try {
     r = spawnSync(process.execPath, [cli, ...args], {
@@ -1686,8 +1778,8 @@ function runPackCli(args) {
 
 /** 异步慢命令（install/uninstall/update）作为 op 跑，复用现有 op 轮询模型。 */
 function startPackOp(packArgs, label, initialOutput) {
-  const cli = packCliPath()
-  if (!cli) return { ok: false, error: '功能包 CLI 不可用（缺少 DSH_DESKTOP_RESOURCE_ROOT，请在桌面壳内使用）' }
+  const { cli, reason } = packCliStatus()
+  if (!cli) return { ok: false, error: reason }
   if (activeOp && activeOp.status === 'running') {
     return { ok: false, busy: true, output: '已有任务进行中：' + activeOp.label }
   }
@@ -1771,7 +1863,7 @@ async function loadPacksIndex() {
   return { packs: [], source: 'none' }
 }
 
-export { classifyPlugin, runProbe, whitelistSource, loadCatalog, parseSimplePatch, checkUpdates, parseSite, registryToCatalog, normalizeRepoUrl, readInstalledProvenance, matchInstalledPackage, resolveProfile, githubList, npmSearch, readZhIntro, selfUpdateCheck, autoUpdateState, setAutoUpdate, desktopProfile, resolveLinkedUpstream, fetchUpstreamVersion, findUpstreamByName, npmLatestInfo, linkedUpdateTarget } // test hooks; cordis only reads name/inject/apply
+export { classifyPlugin, runProbe, whitelistSource, loadCatalog, loadEacRecommendations, mergeRecommendedCatalog, parseSimplePatch, checkUpdates, parseSite, registryToCatalog, normalizeRepoUrl, readInstalledProvenance, matchInstalledPackage, resolveProfile, githubList, npmSearch, readZhIntro, selfUpdateCheck, autoUpdateState, setAutoUpdate, desktopProfile, resolveLinkedUpstream, fetchUpstreamVersion, findUpstreamByName, npmLatestInfo, linkedUpdateTarget } // test hooks; cordis only reads name/inject/apply
 
 export function apply(ctx) {
   const webServer = ctx.get('webServer')

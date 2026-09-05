@@ -35,7 +35,8 @@ const PLUGIN_VERSION = (() => {
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+// 0.1.3：dsh-settings 移除两个独立导出 —— 改走共享兼容垫片（行为逐行一致）。
+import { installSettingsSection, settingsNamespace } from "./settings-compat.js";
 import z from "@deepseek-ai/schemastery";
 import { createWechatClient } from "./wechat.js";
 import { OpenAiCompatAdapter, PROVIDER_ID } from "./openai-compat.js";
@@ -391,12 +392,39 @@ function workspaceFor(key) {
 }
 
 // ---- agent 池：key -> 常驻 agent 记录 ----
-const pool = new Map(); // key -> { key, agent, chain, lastUserCount, lastText, sessions }
+const pool = new Map(); // key -> { key, agent, chain, lastUserCount, lastText, sessions, lastUsed }
+
+/** 从池中移除并回收 agent（dispose 为可选拨口，尽力而为）。 */
+async function dropAgent(key) {
+  const rec = pool.get(key);
+  pool.delete(key);
+  if (!rec) return;
+  try {
+    const a = rec.agent;
+    if (a && typeof a.dispose === "function") await a.dispose();
+  } catch (err) {
+    console.log("[openclaw-bridge] agent dispose failed: " + ((err && err.message) || err));
+  }
+}
 
 async function ensureAgent(ctx, key, cwdOverride) {
   let rec = pool.get(key);
-  if (rec) return rec;
-  if (pool.size >= MAX_AGENTS) throw httpError(429, "bridge agent limit reached (" + MAX_AGENTS + ")");
+  if (rec) {
+    rec.lastUsed = Date.now();
+    return rec;
+  }
+  if (pool.size >= MAX_AGENTS) {
+    // 池满先淘汰最久未用记录（5.3.2 及以前直接 429：旧 agent 与其会话
+    // 句柄永不回收，长会话场景持续累积）。
+    let oldestKey = null;
+    let oldestAt = Infinity;
+    for (const [k, r] of pool) {
+      const at = r.lastUsed || 0;
+      if (at < oldestAt) { oldestAt = at; oldestKey = k; }
+    }
+    if (oldestKey !== null) await dropAgent(oldestKey);
+    if (pool.size >= MAX_AGENTS) throw httpError(429, "bridge agent limit reached (" + MAX_AGENTS + ")");
+  }
   const agents = ctx.get("agents");
   const sessions = ctx.get("sessions");
   const defaultModel = ctx.get("agentDefaultModel");
@@ -415,7 +443,7 @@ async function ensureAgent(ctx, key, cwdOverride) {
       throw httpError(400, "workspace is not a valid directory: " + cwd);
     }
   }
-  rec = { key, agent: null, chain: Promise.resolve(), lastUserCount: 0, lastText: "", sessions, ready: null };
+  rec = { key, agent: null, chain: Promise.resolve(), lastUserCount: 0, lastText: "", sessions, ready: null, lastUsed: Date.now() };
   pool.set(key, rec);
   // S1 修复：并发首建竞态——ready 缓存 in-flight 创建 Promise，
   // 第二个并发请求 await rec.ready 而非直接触碰 null agent。
@@ -534,20 +562,32 @@ async function attachRec(ctx, sessionId) {
   throw new Error("session not found: " + sessionId);
 }
 
-/** 取 firstSeq 之后最后一条 assistant 文本（与 dsh-headless 的 summarize 同构）。 */
-function lastAssistantText(agent, firstSeq) {
+/** 从 fromSeq（含）起向后扫描助手文本/终止原因，返回最后命中的文本与
+ * turn/end reason。增量推进：调用方从上次的扫过位置继续，不再每轮从
+ * firstSeq 全量重扫（长回合 O(n²) 的来源）。 */
+function scanFrom(agent, fromSeq) {
   let text = "";
+  let reason;
+  let last = fromSeq; // 已扫描过的 seq 上界（下一个起点）
   for (const event of agent.session.events) {
-    if (event.seq < firstSeq) continue;
+    if (event.seq < fromSeq) continue;
+    last = event.seq + 1;
     if (event.type === "assistant/message") {
       const joined = (event.data?.message?.content || [])
         .filter((b) => b && b.type === "text")
         .map((b) => b.text || "")
         .join("");
       if (joined) text = joined;
+    } else if (event.type === "turn/end") {
+      reason = event.data?.reason;
     }
   }
-  return text;
+  return { text, reason, next: last };
+}
+
+/** 兼容旧调用面：firstSeq 之后最后一条 assistant 文本。 */
+function lastAssistantText(agent, firstSeq) {
+  return scanFrom(agent, firstSeq).text;
 }
 
 /**
@@ -561,9 +601,11 @@ async function runTurn(rec, toInject, emit) {
   const firstSeq = agent.session.seq;
   let timer = null;
   let emitted = 0;
+  let scanNext = firstSeq; // 增量扫描游标：每 tick 只看新事件
   if (emit) {
     timer = setInterval(() => {
-      const text = lastAssistantText(agent, firstSeq);
+      const { text, next } = scanFrom(agent, scanNext);
+      scanNext = next;
       if (text.length > emitted) {
         emit(text.slice(emitted));
         emitted = text.length;
@@ -584,13 +626,10 @@ async function runTurn(rec, toInject, emit) {
   } finally {
     if (timer) clearInterval(timer);
   }
-  let text = lastAssistantText(agent, firstSeq);
+  const finalScan = scanFrom(agent, scanNext);
+  const text = finalScan.text.length > 0 ? finalScan.text : lastAssistantText(agent, firstSeq);
   if (emit && text.length > emitted) emit(text.slice(emitted));
-  let reason;
-  for (const event of agent.session.events) {
-    if (event.seq < firstSeq) continue;
-    if (event.type === "turn/end") reason = event.data?.reason;
-  }
+  const reason = finalScan.reason;
   if (reason && reason.kind === "error") {
     const err = new Error((reason.error && reason.error.message) || "agent turn failed");
     err.status = 502;
@@ -623,7 +662,7 @@ async function handleWechatCommand(ctx, m, text, replyTo) {
   if (cmd === "new") {
     wxBinds.delete(from);
     const nk = "wx-" + sanitizeKey(from);
-    pool.delete(nk);
+    await dropAgent(nk); // 回收旧 agent（5.3.2 及以前只 delete，泄漏）
     sessionMapDelete(nk); // 同时清除持久化映射，下次消息不再 resume 旧会话
     await replyTo("已开启新会话，下一条消息开始全新上下文。");
     return;
@@ -759,12 +798,15 @@ async function handleChat(ctx, req, res) {
         res.end();
       },
       (err) => {
+        // 对外只给通用文案：原始 err.message 可能含内部路径/上游响应细节，
+        // 直接流给微信侧客户端等于信息泄露；明细进日志。
+        console.log("[openclaw-bridge] stream turn failed: " + String((err && err.message) || err));
         writeSse(res, {
           id,
           object: "chat.completion.chunk",
           created,
           model,
-          choices: [{ index: 0, delta: { content: String(err?.message || err) }, finish_reason: "error" }],
+          choices: [{ index: 0, delta: { content: "处理出错，请稍后重试。" }, finish_reason: "error" }],
         });
         res.write("data: [DONE]\n\n");
         res.end();

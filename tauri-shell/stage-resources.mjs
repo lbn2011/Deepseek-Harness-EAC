@@ -14,7 +14,10 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
+import { copyKernelCacheForTarget, sanitizeClientBuildPaths } from './stage-linux-sanitize.mjs';
+import { withAbsolutizedKernelManifests } from './stage-kernel-manifest.mjs';
 import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
+import { genDistributionDescriptor } from './gen-distribution-descriptor.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dd = path.join(root, 'dsh-desktop');
@@ -25,11 +28,19 @@ const targetPlatform = targetArg ? targetArg.slice('--target='.length) : process
 if (targetPlatform !== 'win32' && targetPlatform !== 'linux' && targetPlatform !== 'darwin') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
+// 交叉打包显式不支持（解析处校验）：native/*.node 与各包 prebuilds 均按本机
+// platform/arch 装配，target 与本机不一致会产出缺原生包的坏树 —— 解析处 fail-fast。
+if (targetPlatform !== process.platform) {
+  throw new Error(
+    `[stage] 交叉打包不支持：--target=${targetPlatform} ≠ 本机 ${process.platform}/${process.arch}`
+    + '（原生模块按本机架构装配，target 必须与本机一致）',
+  );
+}
 
 // 人工同步：新增根模块要加进来（旧壳时代的 main.js / preload.js 已废弃，不再打包）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
-  'balance.js', 'session-watcher.js', 'session-encoding-heal.js', 'profile-module-heal.js',
+  'balance.js', 'session-watcher.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
@@ -37,8 +48,8 @@ const ROOT_FILES = [
   'host-bootstrap.js',
 ];
 const SCRIPTS = [
-  'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
-  'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
+  'patch-session-manage.js', 'plugin-manager-patch.js',
+  'onboarding.js', 'patch-deps.js', 'feature-pack-cli.js',
 ];
 
 // vnext 隔离体系：整个 lib/ 树递归装配（只收运行产物 .js/.cjs/.mjs/.json，
@@ -257,6 +268,18 @@ mkdirSync(path.join(staged, 'dsh-desktop', 'scripts'), { recursive: true });
 for (const f of SCRIPTS) {
   copyRequired(path.join(dd, 'scripts', f), path.join(staged, 'dsh-desktop', 'scripts', f), '脚本');
 }
+// 功能包链路自检（copyRequired 保证源存在，这里校验"成对"装配）：
+// scripts/feature-pack-cli.js 与 lib/desktop/feature-pack.js 必须同时入包 ——
+// CLI 运行时 require ../lib/desktop/feature-pack，漏一个功能包页就整体不可用
+// （市场插件只能报"功能包 CLI 不可用"）。后续新增随包 CLI 照此成对补充。
+{
+  const cli = path.join(staged, 'dsh-desktop', 'scripts', 'feature-pack-cli.js');
+  const core = path.join(staged, 'dsh-desktop', 'lib', 'desktop', 'feature-pack.js');
+  if (existsSync(cli) !== existsSync(core)) {
+    throw new Error('[stage] 功能包链路装配不完整：feature-pack-cli.js 与 feature-pack.js 必须同时入包');
+  }
+  if (existsSync(cli)) console.log('[stage] 功能包链路自检通过（CLI + 核心）');
+}
 // package.json + lock 原样拷贝（npm ci 要求两者一致；--omit=dev 只装生产树）。
 // .npmrc（legacy-peer-deps）必须随行：内核包互相声明 peer，staged 目录里的
 // npm ci 若不带该配置会因 lock 缺 peer 闭包直接 EUSAGE 拒装（全新打包必踩）。
@@ -264,10 +287,24 @@ copyRequired(path.join(dd, 'package.json'), path.join(staged, 'dsh-desktop', 'pa
 copyRequired(path.join(dd, 'package-lock.json'), path.join(staged, 'dsh-desktop', 'package-lock.json'), 'package-lock.json');
 copyRequired(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc'), '.npmrc');
 
+// 安装形态标记（v5.4 双形态）：随包默认「完整版」；NSIS 安装器按用户选择
+// 覆写为 lite（installer-hooks.nsh POSTINSTALL）。便携包保持缺省完整版。
+writeFileSync(path.join(staged, 'dsh-desktop', 'profile.txt'), 'full\n');
+
 console.log('[stage] assets（114MB：38 插件 + 10 皮肤 + 图标）');
 cpSync(path.join(dd, 'assets'), path.join(staged, 'dsh-desktop', 'assets'), { recursive: true });
 validatePluginTree(path.join(dd, 'assets', 'plugins'), '源');
 validatePluginTree(path.join(staged, 'dsh-desktop', 'assets', 'plugins'), 'staging');
+
+// dsh-distribution 发行版描述符（阶段 3）：组件清单来自插件来源台账
+// （assets/SOURCES.json）+ 内核钉版；协议仍为 Draft，描述符随每次打包重算。
+{
+  const info = genDistributionDescriptor({
+    ddRoot: dd,
+    stagedOut: path.join(staged, 'dsh-desktop'),
+  });
+  console.log(`[stage] distribution-descriptor.json（内核 ${info.kernelVersion}，组件 ${info.components}）`);
+}
 
 console.log('[stage] vendor node/npm 运行时');
 mkdirSync(path.join(staged, 'dsh-desktop', 'vendor'), { recursive: true });
@@ -277,14 +314,44 @@ cpSync(path.join(dd, 'vendor', 'node'), path.join(staged, 'dsh-desktop', 'vendor
 if (targetPlatform === 'linux') {
   chmodSync(path.join(staged, 'dsh-desktop', 'vendor', 'node', 'bin', 'node'), 0o755);
 }
-if (existsSync(path.join(dd, 'vendor', 'npm'))) {
-  cpSync(path.join(dd, 'vendor', 'npm'), path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
+// vendor/npm 与 vendor/node、vendor/kernel 同为必需项：随包 node 运行内核需要
+// npm，静默跳过会产出缺 npm 的坏树 —— 与其他 vendor 项一致 fail-fast。
+const npmCache = path.join(dd, 'vendor', 'npm');
+if (existsSync(npmCache)) {
+  cpSync(npmCache, path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
+} else {
+  throw new Error('[stage] vendor/npm 缺失：先运行 npm run fetch-npm 重建 npm 运行时缓存');
 }
 
-console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
+// 内核 tarball 缓存（0.1.2 起内核不在 npm registry 上：package.json 的
+// 依赖/overrides 全部指向 file:vendor/kernel/<version>/*.tgz）。staged 树的
+// npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
+const kernelCache = path.join(dd, 'vendor', 'kernel');
+if (existsSync(kernelCache)) {
+  copyKernelCacheForTarget(
+    kernelCache,
+    path.join(staged, 'dsh-desktop', 'vendor', 'kernel'),
+    targetPlatform,
+  );
+  console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
+} else {
+  throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
+}
+
+console.log('[stage] 生产 node_modules（npm ci --omit=dev --ignore-scripts，首次较慢）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
 if (!keepStagedNm) {
-  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
+  const stagedDesktop = path.join(staged, 'dsh-desktop');
+  const stagedKernel = path.join(stagedDesktop, 'vendor', 'kernel');
+  const manifests = ['package.json', 'package-lock.json'].map((name) => path.join(stagedDesktop, name));
+  withAbsolutizedKernelManifests(manifests, stagedKernel, () => {
+    // npm 11 会把 overrides 里的相对 file: 依赖基于传递依赖目录解析，继而
+    // 错找 node_modules/<pkg>/vendor/kernel。安装期改为绝对 staging 路径；
+    // finally 恢复相对清单，避免把构建机路径写进最终载荷。
+    // stagedDesktop 只含运行时文件，不含 tsconfig；生命周期脚本既无法完成，
+    // 也会扩大第三方 install/postinstall 的执行面。依赖补丁在下方显式重放。
+    execSync('npm ci --omit=dev --ignore-scripts --no-audit --no-fund', { cwd: stagedDesktop, stdio: 'inherit' });
+  });
 }
 
 if (targetPlatform === 'linux') {
@@ -312,6 +379,11 @@ if (targetPlatform === 'darwin') {
 }
 // node-pty 双二进制防护（issue #206）：全平台统一执行（Linux 分支已清除
 // 非 linux prebuilds，win 分支保留原 prebuilds）。
+// 实际使用处二次校验（约束：交叉打包显式不支持）：这里按 targetPlatform ×
+// process.arch 选 prebuilds 并落平台戳，与解析处护栏呼应，防后续改动绕过。
+if (targetPlatform !== process.platform) {
+  throw new Error(`[stage] 目标平台 ${targetPlatform} 与本机 ${process.platform}/${process.arch} 不一致，拒绝装配原生载荷`);
+}
 healNodePtyPlugin(nmDest, targetPlatform, process.arch);
 writeStagedPlatformStamp(platformStamp, targetPlatform);
 
@@ -351,6 +423,38 @@ const vendoredBashFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-tool-
 if (existsSync(vendoredBashFix)) {
   cpSync(vendoredBashFix, path.join(nmDest, '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'));
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
+}
+
+// fs-ext 原生模块回填（内核 0.1.3 新依赖）：session-persistence-jsonl 的会话
+// 锁依赖 fs_ext.node（flock）。staging 用 npm ci --ignore-scripts 安装，fs-ext
+// 的 node-gyp 构建脚本被跳过 → staged 树缺 build/Release/fs_ext.node →
+// session-persistence-jsonl 装载失败 → dsh web 退出码 1（真实环境「DSH 服务
+// 已停止」）。从 dev 树回填已编译产物（同 vendored 回填模式；交叉打包已被
+// 上方 targetPlatform===process.platform 门禁拒绝，这里产物必属本机平台）。
+const fsExtNative = path.join(dd, 'node_modules', 'fs-ext', 'build');
+const fsExtRelease = path.join(fsExtNative, 'Release');
+if (existsSync(path.join(fsExtRelease, 'fs_ext.node'))) {
+  cpSync(fsExtRelease, path.join(nmDest, 'fs-ext', 'build', 'Release'), { recursive: true });
+  console.log('[stage] 已回填 fs-ext 原生运行时（build/Release/fs_ext.node）');
+} else {
+  throw new Error('[stage] dev 树缺少 fs-ext 原生构建（node_modules/fs-ext/build/Release/fs_ext.node）——先在 dev 树 npm install 触发 node-gyp 编译，或换用支持预编译分发的 fs-ext 版本');
+}
+
+const sanitizedClients = sanitizeClientBuildPaths(nmDest);
+console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
+
+// 捆绑依赖完整性清单（issue #7）：对**最终载荷**（npm ci + 补丁 + vendored
+// 回填之后）逐包计文件数，落 bundle-manifest.json。启动期 static-preview.
+// verifyBundledModules 复查比对 —— 空壳包（升级中断残留）会在 boot 期以
+// 明确文案提示重装，而不是 ERR_MODULE_NOT_FOUND 循环。
+// （Electron 时代由 scripts/after-pack.js 生成；Tauri 化后随 stage 生成。）
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const bi = req(path.join(dd, 'bundle-integrity.js'));
+  const manifest = bi.buildBundleManifest(nmDest);
+  writeFileSync(path.join(staged, 'dsh-desktop', 'bundle-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  console.log('[stage] bundle manifest written (' + Object.keys(manifest.packages).length + ' packages)');
 }
 
 // Tauri 的增量资源复制不会删除上一次 bundle 中已经消失的文件。只清理可由
@@ -405,6 +509,9 @@ if (targetPlatform === 'win32') {
     cpSync(loader, dest);
     console.log('[stage] WebView2Loader.dll 已装配: ' + path.relative(root, dest));
   } else {
-    console.warn('[stage] 未找到 WebView2Loader.dll（webview2-com-sys），安装包可能启动即崩');
+    // fail-fast：缺 loader 的安装包启动即 0xC0000135 崩，绝不能让坏包流出炉。
+    console.error('[stage] 未找到 WebView2Loader.dll（webview2-com-sys）——中止打包');
+    console.error('[stage] 提示：先跑一次 npx tauri build 让 cargo 拉取 webview2-com-sys，或设置 CARGO_HOME 指向含该包的目录');
+    process.exit(1);
   }
 }

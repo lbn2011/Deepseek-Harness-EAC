@@ -157,7 +157,16 @@ export class RpcPeer {
 
   private async dispatch(m: RpcMessage): Promise<void> {
     if (m.kind === 'notify') {
-      this.onNotify?.(m.method, m.params);
+      // onNotify 由宿主注册（插件事件处理器，可能是任意第三方代码）：同步
+      // 抛错会让 dispatch 返回 rejected promise → unhandledRejection →
+      // host-bootstrap 侧 exit(1)。转 stderr 留痕，绝不让通知炸掉宿主。
+      try {
+        this.onNotify?.(m.method, m.params);
+      } catch (err) {
+        // stderr 是宿主日志通道（manager 侧 ext:<id>:stderr），绝不污染
+        // 协议 stdout。
+        try { process.stderr.write('[rpc] notify handler error (' + m.method + '): ' + String((err as Error).message) + '\n'); } catch { /* ignore */ }
+      }
       return;
     }
     if (m.kind === 'res') {

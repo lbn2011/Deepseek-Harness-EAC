@@ -186,7 +186,15 @@ window.__ModuleLoader__.load({ id: 'dsh-message-rewind', factory: (require) => {
     }
   }
 
+  // 模块级防重入标记：apply() 每次执行都会调 watchDom()，旧实现无 guard，
+  // 每次都叠加一个 MutationObserver + 1500ms 轮询且从不清理，scan 次数随
+  // apply 次数线性增长。已安装则直接 return（本插件只有 lib/ 无 src/，
+  // lib/ 即源码，直接改）。
+  let domWatchInstalled = false
+
   function watchDom() {
+    if (domWatchInstalled) return
+    domWatchInstalled = true
     const scan = () => { try { decorate(document) } catch (e) { /* ignore */ } }
     scan()
     const mo = new MutationObserver(scan)

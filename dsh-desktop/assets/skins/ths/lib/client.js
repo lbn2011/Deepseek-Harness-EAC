@@ -164,16 +164,20 @@ window.__ModuleLoader__.load({
 			document.head.append(favicon);
 			document.title = SKIN_TITLE;
 			body.append(titlebar, statusbar);
-			const api = ctx.get("connection")?.api;
+			const workspaces = ctx.get("workspaces");
 			const refreshCodeIndex = () => {
-				if (api === void 0) return;
+				if (workspaces === void 0) return;
 				(async () => {
 					try {
-						const list = await api.workspace.list({});
-						if (!list.result.ok) return;
+						// 内核 0.1.2：connection.api 门面已随 typert RPC 换血移除，工作区
+						// 清单改读 workspaces 服务快照；codeKline RPC 现内核不存在，
+						// 缺失时保持无数据（不显示假的 0 行）。
+						const items = workspaces.list.getSnapshot().items;
+						const codeKline = ctx.get("connection")?.api?.codeKline;
+						if (typeof codeKline?.list !== "function") return;
 						let net = 0;
-						for (const workspace of list.result.value.items) {
-							const response = await api.codeKline.list({
+						for (const workspace of items) {
+							const response = await codeKline.list({
 								workspaceId: workspace.workspaceId,
 								days: 1
 							});

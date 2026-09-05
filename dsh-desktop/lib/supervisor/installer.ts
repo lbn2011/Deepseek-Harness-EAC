@@ -216,6 +216,45 @@ export function uninstallSdkPlugin(id: string): { ok: boolean; error?: string } 
   }
 }
 
+/** 安装副产物清扫（boot 期一次性）：.staging/.trash 直接删；.rollback 保留
+ * 每插件最近 N 份（与 rollbackVersions 记录上限对齐），其余删除。5.3.2 及
+ * 以前无任何清扫代码，反复安装失败/升级的插件目录持续膨胀。 */
+export function sweepInstallerResidue(keepRollbacksPerPlugin = 3): { staging: number; trash: number; rollback: number } {
+  const root = extensionsRoot();
+  let staging = 0;
+  let trash = 0;
+  let rollback = 0;
+  for (const [dirName, count] of [['.staging', () => ++staging], ['.trash', () => ++trash]] as const) {
+    try {
+      for (const e of fs.readdirSync(path.join(root, dirName), { withFileTypes: true })) {
+        if (!e.isDirectory()) continue;
+        rmrf(path.join(root, dirName, e.name));
+        count();
+      }
+    } catch { /* 目录不存在 */ }
+  }
+  try {
+    const rbRoot = path.join(root, '.rollback');
+    const byId = new Map<string, string[]>();
+    for (const d of fs.readdirSync(rbRoot)) {
+      const m = /^(.+)-(\d{13})$/.exec(d);
+      if (!m) continue;
+      const list = byId.get(m[1]!) || [];
+      list.push(d);
+      byId.set(m[1]!, list);
+    }
+    for (const [, list] of byId) {
+      list.sort(); // 时间戳升序
+      const excess = list.slice(0, Math.max(0, list.length - keepRollbacksPerPlugin));
+      for (const d of excess) {
+        rmrf(path.join(rbRoot, d));
+        rollback++;
+      }
+    }
+  } catch { /* 目录不存在 */ }
+  return { staging, trash, rollback };
+}
+
 /** 回滚到上一版本（.rollback 未清理时可原地换回；否则按 rollbackVersions 提示重装）。 */
 export function rollbackSdkPlugin(id: string): { ok: boolean; error?: string } {
   try {
@@ -225,9 +264,14 @@ export function rollbackSdkPlugin(id: string): { ok: boolean; error?: string } {
     const rbRoot = path.join(root, '.rollback');
     let latest: string | null = null;
     try {
+      // 严格解析 <id>-<13位时间戳>：startsWith 前缀匹配会把 'foo-bar-…'
+      // （别的插件的回滚点）误配给 'foo'，静默恢复错包。
       const candidates = fs
         .readdirSync(rbRoot)
-        .filter((d) => d.startsWith(id + '-'))
+        .filter((d) => {
+          const m = /^(.+)-(\d{13})$/.exec(d);
+          return !!m && m[1] === id;
+        })
         .sort();
       latest = candidates.length ? path.join(rbRoot, candidates[candidates.length - 1] as string) : null;
     } catch {

@@ -84,9 +84,15 @@ export function healProfileModuleShadowing(
     }
     if (stat.isDirectory() && !stat.isSymbolicLink()) {
       // Real directory copy (pnpm nodeLinker: hoisted) shadows the fallback.
-      fs.rmSync(shadow, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
-      removed.push(full);
-      log('removed shadowing copy: ' + full);
+      // 单条 try：Windows 下单个目录 EBUSY/EPERM（杀软/占用）不应中断
+      // 整个 heal，剩余 shadow 继续清理。
+      try {
+        fs.rmSync(shadow, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
+        removed.push(full);
+        log('removed shadowing copy: ' + full);
+      } catch (err) {
+        log('skip shadowing copy (locked): ' + full + ': ' + String((err as Error).message));
+      }
       continue;
     }
     if (stat.isSymbolicLink()) {
