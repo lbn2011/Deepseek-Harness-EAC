@@ -1,0 +1,32 @@
+# updates/ 清单-包体一致性门禁（主设计 §9；失败即红）
+# 触发：updates/** 变更（热更包 + 清单的原子提交经此校验）
+name: updates-check
+
+on:
+  push:
+    paths:
+      - 'updates/**'
+  pull_request:
+    paths:
+      - 'updates/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: updates-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: hotupdate manifest consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # 校验：latestSeq 与 entries 最大值一致、包体存在且 sha256/size 吻合、
+      # 逐文件围栏（zip-slip / 组件白名单 / bridge.js 禁投）、git 宿主包 ≤5MB
+      - run: node updates/generate.mjs --check

@@ -51,6 +51,11 @@ import {
 } from '../plugin-manager-core.js';
 import { COMPANION_PLUGINS } from '../plugin-registry-data.js';
 import { desktopProfileDir } from '../paths.js';
+import type { HotUpdateApi } from '../hot-update/index.js';
+
+/** 热更新引擎（server.ts 装配后注入；单实例保证 state.json 不被多方争写）。 */
+let hotUpdateApi: HotUpdateApi | null = null;
+export function setHotUpdateApi(api: HotUpdateApi): void { hotUpdateApi = api; }
 
 const bootState = (): { running: boolean } => ({ running: !!state.serverProc });
 
@@ -193,6 +198,11 @@ export async function handleRcAction(action: string, value?: unknown): Promise<R
         const last = ensureGuard().lastGoodSnapshot();
         if (!last) return { ok: false, error: 'no-good-snapshot' };
         return { ...ensureGuard().restore(last.id) };
+      }
+      case 'rollback-hot-update': {
+        // 回滚最近一次组件级热更新（从 backups/<seq>-<ts>/ 快照恢复并重启生效）
+        if (!hotUpdateApi) return { ok: false, error: 'hot-update 未初始化' };
+        return await hotUpdateApi.rollbackLatest();
       }
       case 'read-log': {
         const file = String(value || 'desktop.log');

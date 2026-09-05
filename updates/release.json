@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "version": "6.0.0",
+  "releasedAt": null,
+  "notesUrl": null,
+  "notes": "",
+  "minUpgradeFrom": "4.4.1",
+  "mandatory": false,
+  "downloads": [],
+  "mirrors": [
+    {
+      "id": "gh-proxy",
+      "urlPrefix": "https://gh.geekertao.top/"
+    }
+  ]
+}

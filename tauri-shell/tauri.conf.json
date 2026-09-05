@@ -22,7 +22,8 @@
     ],
     "resources": {
       "staged-resources/sidecar/": "sidecar/",
-      "staged-resources/dsh-desktop/": "dsh-desktop/"
+      "staged-resources/dsh-desktop/": "dsh-desktop/",
+      "staged-resources/hotupdate-baseline.json": "hotupdate-baseline.json"
     },
     "windows": {
       "webviewInstallMode": {

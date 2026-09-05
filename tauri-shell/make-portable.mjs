@@ -51,6 +51,12 @@ mkdirSync(staging, { recursive: true });
 copyFileSync(exe, path.join(staging, 'dsh-eac-shell.exe'));
 writeFileSync(path.join(staging, '.dsh-portable'), '');
 
+// 热更新基线（主设计 §7.5）：Tauri resources 映射已把它拷进 target/release；
+// 便携 zip 同样需要（客户端启动时做 baselineSeq 协调）。
+if (existsSync(path.join(rel, 'hotupdate-baseline.json'))) {
+  copyFileSync(path.join(rel, 'hotupdate-baseline.json'), path.join(staging, 'hotupdate-baseline.json'));
+}
+
 // robocopy 退出码 0-7 均为成功语义（1=有文件复制）；execSync 对非零会抛，需容错。
 function robocopy(src, dest) {
   let code = 0;

@@ -1,0 +1,98 @@
+# release.json 手动回写（grill 决议 2026-09-05：独立 workflow_dispatch 脚本，
+# 不做 CI 自动回写）。前置：release-tauri.yml 已完成构建并上传 Release 资产
+# （含 SHA256SUMS.txt）。
+#
+# 流程：下载 SHA256SUMS.txt → generate.mjs --release 生成清单 → 从 Release
+# API 回填资产 size → 提交回 main（发布完成判据 = git commit 落库，raw 即生效）。
+name: release-manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag（例如 v6.0.0）'
+        required: true
+        type: string
+      version:
+        description: '版本号（例如 6.0.0，缺省取 tag 去 v 前缀）'
+        required: false
+        type: string
+      notes:
+        description: '本版要点（写入 release.json notes）'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-manifest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  writeback:
+    name: generate & commit release.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'SHA256SUMS.txt' --output /tmp/SHA256SUMS.txt
+          cat /tmp/SHA256SUMS.txt
+
+      - name: Generate release.json
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${{ inputs.tag }}"
+            VERSION="${VERSION#v}"
+          fi
+          node updates/generate.mjs --release \
+            --version "$VERSION" \
+            --tag "${{ inputs.tag }}" \
+            --sums /tmp/SHA256SUMS.txt \
+            --notes "${{ inputs.notes }}"
+
+      - name: Backfill asset sizes from Release API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node -e '
+            const { execSync } = require("node:child_process");
+            const fs = require("node:fs");
+            const tag = process.argv[1];
+            const rel = JSON.parse(execSync(`gh api repos/$GITHUB_REPOSITORY/releases/tags/${tag}`, { encoding: "utf8", maxBuffer: 32 << 20 }));
+            const sizes = new Map(rel.assets.map(a => [a.name, a.size]));
+            const file = "updates/release.json";
+            const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+            let missing = 0;
+            for (const d of manifest.downloads || []) {
+              const name = d.url.split("/").pop();
+              if (sizes.has(name)) d.size = sizes.get(name);
+              else { console.warn("asset size not found:", name); missing++; }
+            }
+            fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
+            if (missing > 0) { console.error("部分资产缺 size，请核对 Release 资产完整性"); process.exit(1); }
+          ' "${{ inputs.tag }}"
+
+      - name: Commit back to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/release.json
+          if git diff --cached --quiet; then
+            echo "release.json 无变化，跳过提交"
+            exit 0
+          fi
+          git pull --rebase origin main
+          git commit -m "chore(release): release.json for ${{ inputs.tag }} [skip ci]"
+          git push origin HEAD:main

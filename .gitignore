@@ -47,8 +47,10 @@ dsh-desktop/.dsh-test-runtime/
 .test-runtime/
 # 桌面壳运行数据目录
 dsh-desktop/data/
-# 更新器待装目录（下载的安装包与 .part 断点分片）
-updates/
+# 旧壳时代的根目录 updates/ 待装目录规则已移除：updates/ 现为热更新发布
+# 目录（hotupdate.json/release.json/packages，git push 即发布，见主设计 §3）；
+# 运行期待装目录在 userData/updates（userData 不在仓库内，无需忽略）。
+# 一次性调试目录
 # 一次性调试目录
 /tmp-p2boot/
 
@@ -74,3 +76,6 @@ dsh-desktop/bench-*.json
 
 # ---- Reasonix 工具元数据（勿提交）----
 .reasonix/
+
+# 热更新冒烟沙箱（hotupdate-smoke.js 运行时重建）
+tmp-hotupdate-smoke/

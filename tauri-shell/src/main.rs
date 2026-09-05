@@ -177,6 +177,154 @@ fn set_current_web_url(url: &str) {
     }
 }
 
+// ---- 组件级热更新：sidecar 重生 + boot-attempts 熔断（docs/hot-update-design-addendum-2026-09-05） ----
+//
+// 唯一的 L1 新增职责（生命周期语义）：
+//   1. DSH_USER_DATA 注入 → sidecar 状态机与 Rust 熔断标记同根；
+//   2. shell.restart-sidecar 通知 → 等旧 sidecar 退出（超时强杀）→ 重生新
+//      进程读热更后的代码 → 重发 boot.start（导航链复用既有 web-ready）；
+//   3. boot-attempts 计数器（<app_data>/hotupdate/boot-attempts）：每次
+//      sidecar 拉起前 +1，boot.web-ready 清零；连续 ≥3 次未清零 = 壳侧启动
+//      循环 → 把 exe 换回 .hu-bak（shell-swap.ts 的备份）后 restart。
+//      运行中 exe 不能覆盖但可改名：rename(exe→.hu-broken) + rename(.hu-bak→exe)。
+
+fn hu_user_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path().app_data_dir().ok()
+}
+
+fn hu_boot_attempts_file(app: &tauri::AppHandle) -> Option<PathBuf> {
+    hu_user_dir(app).map(|d| d.join("hotupdate").join("boot-attempts"))
+}
+
+fn hu_read_attempts(file: &PathBuf) -> u32 {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+fn hu_write_attempts(file: &PathBuf, n: u32) {
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(file, n.to_string());
+}
+
+/// boot.web-ready 清零（本次启动健康）。
+fn hu_clear_boot_attempts(app: &tauri::AppHandle) {
+    if let Some(f) = hu_boot_attempts_file(app) {
+        hu_write_attempts(&f, 0);
+    }
+}
+
+/// 每次 sidecar 拉起前的熔断闸门：+1 计数；≥3 → 尝试把 shell exe 换回
+/// .hu-bak 并 restart（新进程将运行恢复后的 exe）。
+fn hu_pre_spawn_gate(app: &tauri::AppHandle) {
+    let Some(file) = hu_boot_attempts_file(app) else { return };
+    let n = hu_read_attempts(&file);
+    if n < 3 {
+        hu_write_attempts(&file, n + 1);
+        return;
+    }
+    // 熔断：连续 3 次拉起未等到 web-ready
+    hu_write_attempts(&file, 0);
+    let Ok(exe) = std::env::current_exe() else { return };
+    let bak = PathBuf::from(format!("{}.hu-bak", exe.display()));
+    if !bak.exists() {
+        println!("[shell] boot-attempts 熔断：无 .hu-bak 可回滚（可能无 shell 热更）");
+        return;
+    }
+    let bad = PathBuf::from(format!("{}.hu-broken", exe.display()));
+    println!("[shell] boot-attempts 熔断（FF6）：换回 {} → {} 后重启", bak.display(), exe.display());
+    if std::fs::rename(&exe, &bad).is_ok() {
+        if std::fs::rename(&bak, &exe).is_ok() {
+            app.restart();
+        } else {
+            // 换回失败：恢复原状，避免两头落空
+            let _ = std::fs::rename(&bad, &exe);
+        }
+    }
+}
+
+/// 按 PID 强杀进程树（taskkill /T 兜底孤儿 web 子进程）。
+fn hu_kill_pid_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+}
+
+/// sidecar 重生（shell.restart-sidecar 消费端）：等待退出 → 闸门计数 →
+/// spawn + 接通知环 → 重发 boot.start（boot.web-ready 通知处理器负责导航）。
+async fn hu_respawn_sidecar(app: tauri::AppHandle) {
+    use tauri::Manager;
+    let state = BRIDGE.get_or_init(|| BridgeState {
+        sidecar: Arc::new(AMutex::new(None)),
+    });
+    // 等待旧进程退出（restartSidecar 已先有界关停 web，正常 <3s）；超时强杀。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let holder = state.sidecar.lock().await.clone();
+        match holder {
+            None => break,
+            Some(sc) => {
+                match sc.child.id() {
+                    Some(pid) => {
+                        if std::time::Instant::now() >= deadline {
+                            println!("[shell] 旧 sidecar 未按时退出，强杀 pid={}", pid);
+                            hu_kill_pid_tree(pid);
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                            break;
+                        }
+                    }
+                    None => break, // 已退出
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    hu_pre_spawn_gate(&app);
+    let user_data = hu_user_dir(&app);
+    match Sidecar::spawn(user_data).await {
+        Ok(sc) => {
+            let mut notify_rx = sc.notify_tx.subscribe();
+            *state.sidecar.lock().await = Some(Arc::new(sc));
+            println!("[shell] sidecar respawned (hot-update)");
+            let app_notify = app.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match notify_rx.recv().await {
+                        Ok(v) => handle_sidecar_notify(&app_notify, &v),
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    }
+                }
+            });
+            // 重发 boot.start：成功/失败后的导航与 setup 首启同链路。
+            let st2 = BridgeState { sidecar: state.sidecar.clone() };
+            tauri::async_runtime::spawn(async move {
+                if let Some(sc) = st2.sidecar.lock().await.clone() {
+                    if let Err(e) = sc.call("boot.start", serde_json::json!({})).await {
+                        eprintln!("[shell] respawn boot.start failed: {}", e);
+                    }
+                }
+            });
+        }
+        Err(e) => eprintln!("[shell] sidecar respawn failed: {}", e),
+    }
+}
+
 fn is_allowed_main_navigation(target: &tauri::Url) -> bool {
     nav_fence::is_allowed_navigation(target, current_web_url().as_deref(), WS_PORT)
 }
@@ -432,7 +580,7 @@ struct Sidecar {
 type PendingRpc = Arc<AMutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
 
 impl Sidecar {
-    async fn spawn() -> Result<Self, String> {
+    async fn spawn(user_data: Option<PathBuf>) -> Result<Self, String> {
         let node = resolve_node();
         let mut cmd = Command::new(&node);
         cmd.arg(sidecar_script())
@@ -449,6 +597,11 @@ impl Sidecar {
         // 壳进程 PID：便携自更新助手的等待目标（等待壳退出后做目录树交换）。
         cmd.env("DSH_SHELL_PID", std::process::id().to_string());
         cmd.env("DSH_RESOURCE_ROOT", resource_root());
+        // userData 根（热更新状态机目录 <userData>/hotupdate/ 与 Rust
+        // boot-attempts 熔断标记同根；缺省回退 sidecar 自算的 userDataDir）。
+        if let Some(ud) = user_data {
+            cmd.env("DSH_USER_DATA", &ud);
+        }
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("spawn node({}) failed: {}", node, e))?;
@@ -1627,6 +1780,8 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
     let params = v.get("params").cloned().unwrap_or(Value::Null);
     match method {
         "boot.web-ready" => {
+            // 热更新验证点：本次启动健康 → boot-attempts 清零（FF6 熔断基准）
+            hu_clear_boot_attempts(app);
             if let Some(url) = params.get("webUrl").and_then(|u| u.as_str()) {
                 set_current_web_url(url);
                 println!("[shell] web-ready → navigate: {}", url);
@@ -1695,6 +1850,16 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             println!("[shell] relaunch requested (agent update)");
             app.restart();
         }
+        "shell.restart-sidecar" => {
+            // 组件级热更新（sidecar/resources/content）原地生效：sidecar 已
+            // 交换文件并自行退出，这里重生新进程读新代码（唯一 L1 生命周期新增）。
+            let seq = params.get("seq").and_then(|s| s.as_u64()).unwrap_or(0);
+            println!("[shell] sidecar restart requested (hot-update seq={})", seq);
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                hu_respawn_sidecar(app2).await;
+            });
+        }
         "shell.quit-for-update" => {
             // 客户端更新交接：更新助手已 detached，壳整体优雅退出
             // （ExitRequested 钩子会同步有界关停 sidecar/dsh web）。
@@ -1760,7 +1925,9 @@ fn main() {
                 };
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    match Sidecar::spawn().await {
+                    // 热更新熔断闸门：连续 3 次拉起未 web-ready → 换回 .hu-bak
+                    hu_pre_spawn_gate(&app_handle);
+                    match Sidecar::spawn(app_handle.path().app_data_dir().ok()).await {
                         Ok(sc) => {
                             let mut notify = sc.notify_tx.subscribe();
                             *st.sidecar.lock().await = Some(Arc::new(sc));

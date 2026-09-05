@@ -2,7 +2,8 @@
  * lib/client-update/release.ts — 发布源查询 / release 规范化 / 资产选择（Task 6.1
  * 自 client-updater.js 提取）。
  *
- * 发布源优先级：GitHub Releases → Gitee Releases；可用环境变量
+ * 发布源优先级：release.json 静态清单（首选，git push 即生效，版本+地址+hash
+ * 三要素齐全）→ GitHub Releases → Gitee Releases；可用环境变量
  * DSH_DESKTOP_RELEASE_API 指向自定义镜像 API。Gitee 因单文件 100MB 限制
  * 把安装包拆成 .part1/.part2 分片，selectAsset 自动识别分片序列。
  */
@@ -11,8 +12,15 @@ import { compareVersions } from '../../updater.js';
 import { httpGetJson, getResponse } from './net.js';
 import type { ApiEndpoint, AssetSelection, ClientUpdCtx, NormalizedRelease } from './types.js';
 
-/** 默认发布仓库（owner/repo slug）。 */
-export const DEFAULT_REPOS = { github: 'zouyuxuan122/Deepseek-Harness-EAC', gitee: 'zouyuxuan122/Deepseek-Harness-EAC' };
+/** 默认发布仓库（owner/repo slug）。grill 决议 2026-09-05：清单/包体/Releases 全量迁至 fork。 */
+export const DEFAULT_REPOS = { github: 'lbn2011/Deepseek-Harness-EAC', gitee: 'lbn2011/Deepseek-Harness-EAC' };
+
+/** release.json 静态清单拉取地址（多源回退，与 hotupdate 清单同模式）。 */
+export const RELEASE_MANIFEST_URLS = [
+  'https://raw.githubusercontent.com/lbn2011/Deepseek-Harness-EAC/main/updates/release.json',
+  'https://gh.geekertao.top/https://raw.githubusercontent.com/lbn2011/Deepseek-Harness-EAC/main/updates/release.json',
+  'https://gitee.com/lbn2011/Deepseek-Harness-EAC/raw/main/updates/release.json',
+];
 
 /** 合法 slug 形状（防配置注入路径穿越等怪值）。 */
 const REPO_SLUG = /^[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_.-]{1,64}$/;
@@ -86,12 +94,78 @@ export function normalizeRelease(source: string, data: Record<string, unknown>):
   };
 }
 
+/** release.json 首选源：单文件 GET，版本/地址/sha256 三要素齐全。 */
+interface ReleaseJsonManifest {
+  schemaVersion: number;
+  version: string;
+  notes?: string;
+  notesUrl?: string | null;
+  downloads?: Array<{ platform?: string; url?: string; sha256?: string; size?: number }>;
+}
+
+async function checkReleaseJsonManifest(ctx: ClientUpdCtx, currentVersion: string): Promise<NormalizedRelease> {
+  let lastErr: unknown = null;
+  for (const url of RELEASE_MANIFEST_URLS) {
+    try {
+      const data = (await httpGetJson(url, { 'cache-control': 'no-cache' })) as ReleaseJsonManifest;
+      if (!data || typeof data.version !== 'string' || !Array.isArray(data.downloads)) {
+        throw new Error('release.json 结构不识别');
+      }
+      if (data.schemaVersion > 1) throw new Error(`schemaVersion ${data.schemaVersion} 高于客户端支持（≤1）`);
+      const release: NormalizedRelease = {
+        source: 'release.json',
+        version: data.version,
+        name: `Deepseek Harness EAC ${data.version}`,
+        body: String(data.notes || ''),
+        htmlUrl: data.notesUrl || null,
+        // 全量透传 downloads（selectAsset 按部署形态再筛）；sha256 三要素齐全
+        assets: data.downloads
+          .filter((d) => d && typeof d.url === 'string' && d.url)
+          .map((d) => {
+            const item: { name: string; url: string; size: number; sha256?: string } = {
+              name: String(d.url).split('/').pop() || '',
+              url: String(d.url),
+              size: Number(d.size || 0),
+            };
+            if (typeof d.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(d.sha256)) {
+              item.sha256 = d.sha256.toLowerCase();
+            }
+            return item;
+          })
+          .filter((a) => a.name),
+      };
+      release.isNewer = compareVersions(release.version, currentVersion) > 0;
+      ctx.log('client-update', `[release.json] 清单版本=${release.version} 当前=${currentVersion} 资产数=${release.assets.length}`);
+      return release;
+    } catch (err) {
+      lastErr = err;
+      ctx.log('client-update', `[release.json] ${new URL(url).host} 拉取失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('release.json 全部源拉取失败');
+}
+
 /**
  * 依次查询发布源，取「第一个含本平台资产的最新 release」。
  * 返回的 release 带 isNewer（与 currentVersion 比较）。
  */
 export async function checkLatest(ctx: ClientUpdCtx, currentVersion: string): Promise<NormalizedRelease> {
   const errors: string[] = [];
+  // 首选：release.json 静态清单（失败或 schema 不识别 → 降级 API 轮询）
+  try {
+    const rel = await checkReleaseJsonManifest(ctx, currentVersion);
+    if (rel.isNewer) {
+      // 资产可用性校验（selectAsset 失败 → 降级 API 轮询，防止清单指向残缺资产）
+      selectAsset(rel);
+      return rel;
+    }
+    // 清单版本 ≤ 当前：直接采信（发布即 git push，无需轮询 API）
+    return rel;
+  } catch (err) {
+    const msg = (err as Error).message;
+    errors.push(`release.json: ${msg}`);
+    ctx.log('client-update', `[release.json] 首选源失败，降级 API 轮询: ${msg}`);
+  }
   for (const ep of apiEndpoints()) {
     try {
       const data = await httpGetJson(ep.url, ep.headers || {});

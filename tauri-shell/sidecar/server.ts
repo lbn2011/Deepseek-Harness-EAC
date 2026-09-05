@@ -54,6 +54,7 @@ const marketMod = load<typeof import('../../dsh-desktop/lib/market-ops.js')>('ma
 const shortcutsMod = load<typeof import('../../dsh-desktop/lib/shortcuts.js')>('shortcuts.js');
 const junctionPatrolMod = load<typeof import('../../dsh-desktop/lib/watchdog-boot.js')>('watchdog-boot.js');
 const clientUpdateMod = load<typeof import('../../dsh-desktop/lib/update-flow.js')>('update-flow.js');
+const hotUpdateMod = load<typeof import('../../dsh-desktop/lib/hot-update/index.js')>('hot-update/index.js');
 const previewMod = load<typeof import('../../dsh-desktop/lib/preview.js')>('preview.js');
 const fileRootsMod = load<typeof import('../../dsh-desktop/lib/paths.js')>('paths.js');
 const recoveryCenter = load<typeof import('../../dsh-desktop/lib/recovery-center/register-sidecar.js')>('recovery-center/register-sidecar.js');
@@ -95,7 +96,7 @@ const MOUNTED = [
   'state', 'log', 'host-ctx', 'proc', 'paths', 'server', 'boot', 'watchdog-boot',
   'shortcuts', 'plugin-copy', 'plugins', 'plugin-manager-core', 'market-modules',
   'market-ops', 'preview', 'guard', 'balance-ui', 'bridge', 'migration', 'onboarding',
-  'run-state', 'session-heal', 'terminal', 'tray', 'update-flow', 'window', 'ipc/index',
+  'run-state', 'session-heal', 'terminal', 'tray', 'update-flow', 'hot-update', 'window', 'ipc/index',
   'snapshot/manager', 'snapshot/scheduler', 'supervisor/registry',
   'supervisor/state-machine', 'supervisor/installer', 'supervisor/permissions',
   'supervisor/incidents', 'extension-host/manager', 'extension-host/bridge-server',
@@ -513,6 +514,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       // 崩溃循环计数（= main.js recordBootFailureNow）：连续失败达阈值后，
       // 救援页据 rescue.state.crash 引导安全模式。
       rescueIntegration.recordBootFailureNow(String(((e as Error).message) || e));
+      hotUpdate.onBootFailure(); // 热更验证失败计数，≥3 熔断回滚（FF6）
       notify('boot.failed', { error: String(((e as Error).message) || e) });
       throw e;
     }
@@ -522,6 +524,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     notify('boot.web-ready', r);
     startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
     scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
+    scheduleHotUpdateChecks(); // 启动 90s 首检 + 独立 6h 周期（组件级热更新）
+    hotUpdate.onBootSuccess(); // 热更重启后的验证提交（phase 非 RESTART 时为 no-op）
     // vnext（Phase 2）：并行拉起全部启用的 SDK 插件宿主（不阻塞 boot）。
     void extHost.startEnabledExtensionHosts();
     return r;
@@ -993,6 +997,20 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
         }
         return { ok: true };
       }
+      case 'check-hotupdate': {
+        // 手动检查 = 用户已同意；命中即走完整状态机（下载→快照→交换→重启）
+        try {
+          const r = await hotUpdate.checkOnce({ manual: true });
+          return { ok: true, ...r };
+        } catch (e) {
+          log('hot-update', '手动检查失败: ' + String(((e as Error).message) || e));
+          return { ok: false, error: String(((e as Error).message) || e) };
+        }
+      }
+      case 'hotupdate-state': {
+        const s = hotUpdate.getState();
+        return { ok: true, phase: s.phase, appliedSeq: s.appliedSeq, components: s.components, blockedSeqs: s.blockedSeqs, lastCheckAt: s.lastCheckAt };
+      }
       case 'export-logs': {
         // BUG-G-101：原名 'recovery.export-logs' 全仓不存在；真实通道是
         // BUG-B-008 装配的 'chrome:export-logs'（lib/ipc/recovery.ts:68）。
@@ -1204,6 +1222,43 @@ function scheduleAutoUpdateChecks(): void {
   setInterval(() => {
     clientUpdateMod.runClientUpdateFlow(false).catch(() => { /* 网络失败不打扰 */ });
   }, 12 * 3600 * 1000).unref();
+}
+
+// ---- 组件级热更新（docs/hot-update-design-addendum-2026-09-05） ------------
+// 状态机目录挂在 Rust app_data_dir（DSH_USER_DATA 注入，与 boot-attempts 熔断
+// 标记同根）；缺省回退 sidecar 计算的 userDataDir。引擎不传 confirm：
+// 自动检查只广播可用性（hotupdate.available），不动安装树；菜单手动检查
+// 视为用户已同意直接应用（sidecar 的 showMessageBox 是无头兜底，恒返回
+// 取消/确定的假应答，接进来会造成自动批准的危险语义）。
+const hotUpdate = hotUpdateMod.createHotUpdate({
+  installRoot: path.resolve(DSH_DESKTOP_ROOT, '..'),
+  dshDesktopRoot: DSH_DESKTOP_ROOT,
+  userDataDir: process.env.DSH_USER_DATA || userDataDir,
+  appVersion: pkgVersion,
+  log,
+  notify,
+  restartSidecar: () => {
+    // 有界收口：先关停 dsh web（避免孤儿占端口）→ 通知 Rust 重生 → 自退。
+    // Rust 侧见退出即按标记重生新进程（读热更后的代码）并重发 boot.start。
+    void (async () => {
+      try { await (bootMod.stopServer as () => Promise<void>)(); } catch { /* 关停失败继续退出 */ }
+      notify('shell.restart-sidecar', {});
+      setTimeout(() => process.exit(0), 500).unref();
+    })();
+  },
+  quitForUpdate: () => { notify('shell.quit-for-update', {}); },
+});
+hotUpdate.init();
+recoveryCenter.setHotUpdateApi(hotUpdate); // 救援中心「回滚最近热更新」入口
+
+// 热更检查调度：启动后 90s 首检（避开 60s 的正式更新首检）+ 独立 6h 周期
+//（grill 决议 2026-09-05：与正式更新 12h 解耦）。
+let hotUpdateScheduled = false;
+function scheduleHotUpdateChecks(): void {
+  if (hotUpdateScheduled) return;
+  hotUpdateScheduled = true;
+  setTimeout(() => { hotUpdate.checkOnce({ manual: false }).catch(() => { /* 自动检查静默失败 */ }); }, 90000).unref();
+  setInterval(() => { hotUpdate.checkOnce({ manual: false }).catch(() => { /* 静默 */ }); }, 6 * 3600 * 1000).unref();
 }
 
 // ---- 救援链（硬门槛②；实现于 rescue-integration.ts，同产物编译） ----------
