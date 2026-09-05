@@ -6,7 +6,7 @@
 //             apply-update.ps1（-AppPid 0 跳过等待），断言 staging → 顶层项
 //             全量交换、.dsh-portable 保留、日志落盘。
 //
-// 用法：node update-smoke.js
+// 用法：node scripts/smoke/update-smoke.js
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const repo = path.resolve(__dirname);
+const repo = path.resolve(__dirname, '..', '..');
 
 let failures = 0;
 const check = (name, ok, detail) => {

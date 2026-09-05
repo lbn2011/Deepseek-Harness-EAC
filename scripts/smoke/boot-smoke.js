@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 
-const repo = path.resolve(__dirname);
+const repo = path.resolve(__dirname, '..', '..');
 const tmpHome = path.join(repo, 'tmp-p2boot', 'dsh-home');
 fs.mkdirSync(tmpHome, { recursive: true });
 

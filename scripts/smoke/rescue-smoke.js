@@ -1,5 +1,5 @@
 'use strict';
-// 教援模式实测 v2（一次性）：按真实 UX 驱动——
+// 救援模式实测 v2（一次性）：按真实 UX 驱动——
 //   启动 → 外部杀 dsh web（模拟崩溃）→ /died 页「重新启动」→ 存活；
 //   再杀 → /died 页「安全模式重启」→ safe-mode 激活 + patch 行收缩；
 //   再杀 → 退出安全模式（快照恢复）→ 重新启动 → 行恢复 + 存活。
@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 
-const repo = path.resolve(__dirname);
+const repo = path.resolve(__dirname, '..', '..');
 const tmpHome = path.join(repo, 'tmp-p2boot', 'rescue-home');
 fs.rmSync(tmpHome, { recursive: true, force: true });
 fs.mkdirSync(tmpHome, { recursive: true });

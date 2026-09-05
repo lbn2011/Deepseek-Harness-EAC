@@ -6,14 +6,14 @@
 //   4) 断言（期望目录 = 4.4.1 键里的 InstallLocation，动态读取）：
 //      键→新 Tauri 卸载器、新布局落地、内核 rc.2、旧 resources\app 清除、快捷方式在
 // 全部注册表/目录检查走 PowerShell（reg.exe 经 Git Bash 转义不可靠）。
-// 用法：node upgrade-test-441.js <4.4.1-setup> <6.0.0-setup> [期望版本，默认 6.0.0]
+// 用法：node scripts/smoke/upgrade-test-441.js <4.4.1-setup> <6.0.0-setup> [期望版本，默认 6.0.0]
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
 
 const OLD_SETUP = process.argv[2];
 const NEW_SETUP = process.argv[3];
 const EXPECT_NEW = process.argv[4] || '6.0.0';
-if (!OLD_SETUP || !NEW_SETUP) { console.error('用法: node upgrade-test-441.js <4.4.1-setup> <6.0.0-setup> [期望版本]'); process.exit(2); }
+if (!OLD_SETUP || !NEW_SETUP) { console.error('用法: node scripts/smoke/upgrade-test-441.js <4.4.1-setup> <6.0.0-setup> [期望版本]'); process.exit(2); }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;

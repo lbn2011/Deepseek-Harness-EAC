@@ -5,7 +5,7 @@
 //   3) 静默装 6.0.0 → PREINSTALL 杀进程树 + 接管旧卸载器（继承原安装目录）
 //   4) 断言：DisplayVersion 6.0.0、新壳/sidecar 树新旧覆盖一致、内核 rc.2、快捷方式、无进程残留。
 //   （与 441 差异：5.1.0 已是 Tauri 布局，无「旧 Electron resources\app 清除」断言）
-// 用法：node upgrade-test-510.js <5.1.0-setup> <6.0.0-setup> [期望版本，默认 6.0.0]
+// 用法：node scripts/smoke/upgrade-test-510.js <5.1.0-setup> <6.0.0-setup> [期望版本，默认 6.0.0]
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,7 +13,7 @@ const path = require('node:path');
 const OLD_SETUP = process.argv[2];
 const NEW_SETUP = process.argv[3];
 const EXPECT_NEW = process.argv[4] || '6.0.0';
-if (!OLD_SETUP || !NEW_SETUP) { console.error('用法: node upgrade-test-510.js <5.1.0-setup> <6.0.0-setup> [期望版本]'); process.exit(2); }
+if (!OLD_SETUP || !NEW_SETUP) { console.error('用法: node scripts/smoke/upgrade-test-510.js <5.1.0-setup> <6.0.0-setup> [期望版本]'); process.exit(2); }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;

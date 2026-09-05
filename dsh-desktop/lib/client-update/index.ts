@@ -16,6 +16,7 @@ export {
   expectedSha256,
   fetchSumsMap,
   isPortable,
+  isTauriPortable,
   normalizeRelease,
   releaseFallbacks,
   resolveRepos,
@@ -36,6 +37,7 @@ export {
   buildInstalledApplyScript,
   buildInstalledPowerShellArgs,
   buildSpawnCommandLine,
+  buildTauriPortableApplyScript,
 } from './apply.js';
 export type { ApplyScriptParams, ApplyUpdateOpts, InstalledPowerShellArgsParams } from './apply.js';
 export type {

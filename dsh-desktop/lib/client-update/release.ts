@@ -8,6 +8,9 @@
  * 把安装包拆成 .part1/.part2 分片，selectAsset 自动识别分片序列。
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import { compareVersions } from '../../updater.js';
 import { httpGetJson, getResponse } from './net.js';
 import type { ApiEndpoint, AssetSelection, ClientUpdCtx, NormalizedRelease } from './types.js';
@@ -31,6 +34,22 @@ export const MIN_VALID_BYTES = 64 * 1024 * 1024;
 /** 是否便携版（PORTABLE_EXECUTABLE_DIR 由 portable 启动器注入）。 */
 export function isPortable(): boolean {
   return !!process.env.PORTABLE_EXECUTABLE_DIR;
+}
+
+/**
+ * 是否 Tauri 便携版：DSH_SHELL_EXE 指向的 exe 同级存在 .dsh-portable 标记
+ * （make-portable.mjs 装配时写入）。决定自更新走「整包 zip 目录树交换」
+ * 而非单 exe 覆盖（Task 6.1 拆分时曾随 buildTauriPortableApplyScript 一起
+ * 被误删，update-smoke.js Part A/B 看护）。
+ */
+export function isTauriPortable(): boolean {
+  const shellExe = process.env.DSH_SHELL_EXE;
+  if (!shellExe) return false;
+  try {
+    return fs.existsSync(path.join(path.dirname(shellExe), '.dsh-portable'));
+  } catch {
+    return false;
+  }
 }
 
 /** 解析仓库地址（格式非法或缺省时回退到内置默认仓库）。 */
@@ -151,20 +170,24 @@ async function checkReleaseJsonManifest(ctx: ClientUpdCtx, currentVersion: strin
  */
 export async function checkLatest(ctx: ClientUpdCtx, currentVersion: string): Promise<NormalizedRelease> {
   const errors: string[] = [];
-  // 首选：release.json 静态清单（失败或 schema 不识别 → 降级 API 轮询）
-  try {
-    const rel = await checkReleaseJsonManifest(ctx, currentVersion);
-    if (rel.isNewer) {
-      // 资产可用性校验（selectAsset 失败 → 降级 API 轮询，防止清单指向残缺资产）
-      selectAsset(rel);
+  // 首选：release.json 静态清单（失败或 schema 不识别 → 降级 API 轮询）。
+  // DSH_DESKTOP_RELEASE_API（自定义镜像/冒烟 mock）设置时跳过——该 env 表示
+  // 调用方要完全接管发布源，静态清单不得抢先返回。
+  if (!process.env.DSH_DESKTOP_RELEASE_API) {
+    try {
+      const rel = await checkReleaseJsonManifest(ctx, currentVersion);
+      if (rel.isNewer) {
+        // 资产可用性校验（selectAsset 失败 → 降级 API 轮询，防止清单指向残缺资产）
+        selectAsset(rel);
+        return rel;
+      }
+      // 清单版本 ≤ 当前：直接采信（发布即 git push，无需轮询 API）
       return rel;
+    } catch (err) {
+      const msg = (err as Error).message;
+      errors.push(`release.json: ${msg}`);
+      ctx.log('client-update', `[release.json] 首选源失败，降级 API 轮询: ${msg}`);
     }
-    // 清单版本 ≤ 当前：直接采信（发布即 git push，无需轮询 API）
-    return rel;
-  } catch (err) {
-    const msg = (err as Error).message;
-    errors.push(`release.json: ${msg}`);
-    ctx.log('client-update', `[release.json] 首选源失败，降级 API 轮询: ${msg}`);
   }
   for (const ep of apiEndpoints()) {
     try {
@@ -230,7 +253,11 @@ export function selectAsset(release: NormalizedRelease): AssetSelection {
   // 等附属资产不会被误选。
   // V4 平台围栏：文件名带 linux/arm64 等标记的一律不选（双平台发布时
   // 防止误拿；x64 正则本身已排除 arm64，这里再显式拒绝）。
-  const wanted = isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
+  // Tauri 便携：选 -portable.zip（整包 zip → 目录树交换更新，配
+  // applyUpdate 的 buildTauriPortableApplyScript 分支）；旧壳便携/安装版
+  // 正则不变。Task 6.1 拆分时该分支曾被误删 → Tauri 便携用户会误选
+  // Setup.exe（update-smoke.js Part A 看护）。
+  const wanted = isTauriPortable() ? /portable\.zip$/i : isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
   const platformOk = (name: string): boolean => !/linux|arm64|aarch64|appimage|\.deb$|\.rpm$|\.snap$/i.test(name);
   const direct = release.assets.find((a) => wanted.test(a.name) && platformOk(a.name));
   if (direct) return { parts: [direct], name: direct.name, totalSize: direct.size };

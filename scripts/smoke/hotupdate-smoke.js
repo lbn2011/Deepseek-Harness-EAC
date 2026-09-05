@@ -13,7 +13,7 @@
  *   FF6   熔断：连续 3 次验证失败 → 自动回滚 + blockedSeqs + 再重启
  *   仓库侧 generate.mjs 沙箱：--hotupdate 生成 / --check 一致性 / 围栏拒收
  *
- * 用法: node hotupdate-smoke.js
+ * 用法: node scripts/smoke/hotupdate-smoke.js
  * 依赖: dsh-desktop 编译产物（lib/hot-update/index.js）与 node_modules/fflate。
  */
 
@@ -24,7 +24,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const ROOT = __dirname;
+const ROOT = path.resolve(__dirname, '..', '..');
 const DD = path.join(ROOT, 'dsh-desktop');
 const HU_INDEX = path.join(DD, 'lib', 'hot-update', 'index.js');
 const GENERATE_MJS = path.join(ROOT, 'updates', 'generate.mjs');
@@ -37,10 +37,8 @@ if (!fs.existsSync(HU_INDEX)) {
 }
 
 const fflate = require(path.join(DD, 'node_modules', 'fflate'));
-// 必须在引擎模块加载前设置覆盖（manifest.ts 的 MANIFEST_URLS 模块级求值）
-// mock 源地址先起服务再定，先用占位符：引擎在 checkOnce 时才读 URL 数组，
-// 但 require 前必须已有值 → 先置空串占位，listen 后改写不可行 → 改为：
-// mock 起在固定测试端口。
+// 必须在引擎模块加载前设置覆盖（manifest.ts 的 MANIFEST_URLS 模块级求值），
+// 而 mock 源端口要先于 require 确定 → mock 固定端口 18790。
 const MOCK_PORT = 18790;
 process.env.DSH_HOTUPDATE_MANIFEST_URL = `http://127.0.0.1:${MOCK_PORT}/updates/hotupdate.json`;
 const huApi = require(HU_INDEX);
@@ -321,7 +319,6 @@ function killChildAtPhase(childScriptPath, env, phase, installRoot, userData) {
   const s1 = readState(userData);
   assert(s1.phase === 'IDLE' && s1.components.sidecar && s1.components.sidecar.seq === 1, 'boot 后提交：IDLE + components.sidecar.seq=1');
   assert(sinks.events.some((e) => e.ev === 'client-update.progress' && e.params.channel === 'hotupdate'), '进度通知经 client-update.progress（channel=hotupdate）');
-  assert(fs.existsSync(path.join(huApi.huDirs(userData).backups, '1-')) === false && true, '备份目录存在性检查放行');
 
   // ---- FF2：版本围栏 -------------------------------------------------------
   console.log('\n[FF2] 版本围栏：appVersionRange 外 entry 不进 RESOLVED');
@@ -364,7 +361,7 @@ function killChildAtPhase(childScriptPath, env, phase, installRoot, userData) {
   mock.addPackage('resources-4.zip', tamperedZip);
   mock.setEntries([entryFor(4, '文件级篡改例', 'resources', { hu: pkg4.hu, zip: tamperedZip }, mock.base)]);
   threw = false;
-  try { await engine.checkOnce({ manual: true }); } catch (e) { console.log('    [debug] FF1b error:', String(e.message).slice(0, 200)); threw = /sha256/.test(String(e.message)); }
+  try { await engine.checkOnce({ manual: true }); } catch (e) { threw = /sha256/.test(String(e.message)); }
   assert(threw, '逐文件 sha256 校验拦截（错误信息含 sha256）');
   assert(fs.readFileSync(path.join(installRoot, 'dsh-desktop', 'lib', 'core.js'), 'utf8') === 'CORE-V0\n', 'core.js 保持 V0');
 
@@ -394,8 +391,7 @@ function killChildAtPhase(childScriptPath, env, phase, installRoot, userData) {
     { seq: 12, phase: 'RESTART', component: 'sidecar', pkg: buildPackage({ seq: 12, component: 'sidecar', version: 'hu12', replaces: { 'sidecar/server.js': strToBuf('SIDECAR-V12\n') } }) },
   ];
   for (const round of rounds) {
-    const name = `round-${round.seq}.zip`;
-    mock.addPackage(name, round.pkg.zip);
+    mock.addPackage(`round-${round.seq}.zip`, round.pkg.zip);
     fs.writeFileSync(path.join(TMP, `pkg-${round.seq}.zip`), round.pkg.zip);
     const before = treeHash(installRoot);
     const { waitExit } = killChildAtPhase(childScriptPath, { ...childEnv, HU_ZIP: path.join(TMP, `pkg-${round.seq}.zip`), HU_COMPONENT: round.component, HU_SEQ: String(round.seq) }, round.phase, installRoot, userData);

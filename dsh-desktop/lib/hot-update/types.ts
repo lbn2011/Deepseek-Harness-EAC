@@ -1,5 +1,5 @@
 /**
- * lib/hot-update/types.ts — 组件级热更新类型定义（L2，无 Electron/Tauri import）。
+ * lib/hot-update/types.ts — 组件级热更新类型定义（L2，不依赖桌面宿主框架）。
  *
  * 清单/状态结构与 updates/generate.mjs（发布端）、
  * docs/hot-update-design-addendum-2026-09-05.md §3 组件矩阵保持一致。
@@ -110,7 +110,7 @@ export interface HuBackupManifest {
   reason: string;
 }
 
-/** 宿主注入能力（sidecar server.ts 装配；引擎自身不碰 Tauri/Electron）。 */
+/** 宿主注入能力（sidecar server.ts 装配；引擎自身不碰壳层/宿主 API）。 */
 export interface HotUpdateCtx {
   /** 安装根：含 sidecar/ 与 dsh-desktop/ 兄弟目录。 */
   installRoot: string;

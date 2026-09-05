@@ -4,13 +4,13 @@
 //  A) 抽搐 —— #root/中栏 transition-duration 0s，切窗口/会话时 #root 位移 < 1px
 //  B) 新建对话截断 —— 矮视口下 hero 输入卡完整可见（顶部 ≥36 玻璃栏下沿）
 //  C) 模型选择遮挡 —— 向上展开的模型菜单越界时被桥内 rescue 翻转向下可见
-// 用法: node ui-verify-smoke.js [exePath]   （DSH_SMOKE_EXE 亦可）
+// 用法: node scripts/smoke/ui-verify-smoke.js [exePath]   （DSH_SMOKE_EXE 亦可）
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 
-const repo = path.resolve(__dirname);
+const repo = path.resolve(__dirname, '..', '..');
 const tmpHome = path.join(repo, 'tmp-ui-verify-installed', 'ui-home');
 fs.mkdirSync(tmpHome, { recursive: true });
 const CDP_PORT = 9334;

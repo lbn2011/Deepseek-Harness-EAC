@@ -53,6 +53,14 @@ dsh-desktop/data/
 # 一次性调试目录
 # 一次性调试目录
 /tmp-p2boot/
+/tmp-ui-verify-installed/
+
+# ---- 本地工具状态目录（不入库） ----
+.workbuddy/
+.mimosa/
+.trae/
+.agents/
+dsh-desktop/.mimosa/
 
 # ---- 日志与临时文件 ----
 *.log

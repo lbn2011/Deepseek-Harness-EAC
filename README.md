@@ -125,9 +125,10 @@
 
 ### 升级方式
 
-- **客户端本体**：启动后自动检查上游新版本（GitHub Releases 双源回退），经你同意后下载安装；
+- **客户端本体**：启动后自动检查新版本（release.json 静态清单优先，GitHub/Gitee Releases API 双源回退），经你同意后下载安装；
   便携版下载整包后自动「目录树交换」并重启，安装版引导新 Setup 静默覆盖。
   失败自动保留当前版本。
+- **组件级热更新**：sidecar/资源等小修复包（≤5MB）无需重装即可热更新——应用前自动快照，任意阶段失败逐字节回滚；恢复中心提供「回滚最近热更新」入口。详见 [docs/HOT-UPDATE.md](docs/HOT-UPDATE.md)。
 - **官方 agent（dsh）**：自动检测 `@deepseek-ai/dsh` 新版本，同意后安装到数据目录 overlay，原子切换，新版启动失败可一键回退内置版本。
 - 也可直接下载上方最新安装包覆盖安装，数据不会丢失。
 
@@ -202,7 +203,10 @@
 
 ## 开发者文档
 
-完整的当前分支开发参考见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)，包括 Tauri 三层架构、L2 模块边界、开发/测试/打包命令、运行时数据目录、桥接契约和排障清单。
+- 开发指南：[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) —— 三层架构与模块纪律、环境准备、构建/测试/冒烟命令、数据目录、桥接契约与排障清单
+- 发布指南：[docs/RELEASE.md](docs/RELEASE.md) —— 正式发布与热更新发布全流程
+- 热更新系统：[docs/HOT-UPDATE.md](docs/HOT-UPDATE.md)
+- 文档总索引：[docs/README.md](docs/README.md)（含 ADR、历史交接归档）
 
 ### 从源码构建（Tauri 壳，v5.0 默认）
 
@@ -210,8 +214,9 @@
 cd dsh-desktop
 npm install
 npm run fetch-runtime            # 内置 node.exe + npm CLI
-node tauri-shell/stage-resources.mjs   # 装配打包资源（sidecar + dsh-desktop 运行树）
-cd tauri-shell
+npm run build                    # tsc 全量编译（.js 产物不入库，克隆后必须先编译）
+npm run tauri:stage              # 装配打包资源（= node ../tauri-shell/stage-resources.mjs）
+cd ../tauri-shell
 npx -y @tauri-apps/cli@2 build   # release 构建 + NSIS 安装包
 node make-portable.mjs           # 便携 zip（可选）→ target/release/portable/
 
@@ -239,9 +244,13 @@ npm run dist             # 构建 portable + NSIS 安装包 → dist/
 
 ```powershell
 cd dsh-desktop
-npm test                 # node --test test/*.test.mjs（pretest 含 tsc 全量类型检查）
-node ../gui-smoke.js     # Tauri 壳 GUI 冒烟（18 项，需先 cargo build）
-node ../update-smoke.js  # 自更新链路冒烟（mock 发布源 + 目录树交换）
+npm test                                # node --test test/*.test.mjs（pretest 含 tsc 全量类型检查）
+
+# 仓库根
+node scripts/smoke/boot-smoke.js        # sidecar boot.start → 探活 → 优雅关停
+node scripts/smoke/update-smoke.js      # 自更新链路冒烟（mock 发布源 + 目录树交换）
+node scripts/smoke/hotupdate-smoke.js   # 组件级热更新 FF1–FF6 全自动化
+node scripts/smoke/gui-smoke.js         # Tauri 壳 GUI 冒烟（18 项，需先 cargo build）
 ```
 
 ### 架构（v5.0：三层壳边界，ADR 0002）
@@ -274,29 +283,26 @@ node ../update-smoke.js  # 自更新链路冒烟（mock 发布源 + 目录树交
 ### 目录结构
 
 ```
-dsh-desktop/                  # Electron 桌面端
-├── main.js                   # Electron 主进程
-├── updater.js                # 官方 dsh agent 更新引擎
-├── client-updater.js         # 客户端本体自更新引擎
-├── balance.js                # DeepSeek 余额查询
-├── session-watcher.js        # 会话完成监听
-├── plugin-guard.js           # 插件保护中心引擎（快照/回滚/体检/修复/守护启动/事故报告）
-├── profile-module-heal.js    # profile 模块遮蔽自愈（真实目录 + pnpm 链接）
-├── preload.js                # 沙箱预加载
-├── assets/                   # 加载页、更新进度页、图标、皮肤、配套插件
+dsh-desktop/                  # L2 业务树（打包时整树装配进安装树）
+├── lib/                      # 模块化业务（client-update / hot-update / update-flow
+│                             # / recovery-center / guard / server …；.ts 入库，
+│                             #   .js 为 tsc 原地产物不入库）
+├── client-updater.js 等      # 根级门面（re-export lib/ 实现，兼容既有调用方）
+├── assets/                   # 图标、壳页 HTML、皮肤、配套插件
 │   ├── skins/                # 10 款内置 Web UI 皮肤
-│   └── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch
-│                             # 内置社区插件：dsh-webui-market / dsh-tool-vision
-│                             # / dsh-soul-md / dsh-web-mobile-fix
-│                             # （含 vendor 与自包含运行时依赖，随仓库分发）
+│   └── plugins/              # 配套插件 + 内置社区插件（含 vendor，随仓库分发）
 ├── scripts/                  # 构建与开发辅助脚本
-├── build/icon.png            # electron-builder 图标
-├── vendor/                   # 内置 node.exe / npm CLI（不入库）
-├── electron-builder.yml      # 打包配置
-└── dist/                     # 构建产物（不入库，发布到 Releases）
-openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
-research/                     # 第三方微信/桥接协议调研资料
+├── test/                     # node --test 单测
+└── vendor/                   # 内置 node.exe / npm CLI（不入库）
+tauri-shell/                  # L1 Rust 壳
+├── src/main.rs               # 壳本体（窗口/托盘/生命周期/WS 桥）
+├── sidecar/                  # server.ts（L2 入口）+ bridge.ts（页面桥）
+├── stage-resources.mjs       # 打包资源装配 → staged-resources/
+└── make-portable.mjs         # 便携 zip 装配
+scripts/smoke/                # 端到端冒烟脚本（boot/update/hotupdate/gui/rescue/…）
+updates/                      # 热更新发布目录（hotupdate.json / release.json / packages/）
+docs/                         # 文档集（索引：docs/README.md）
+.github/workflows/            # ci / release-tauri / updates-check / release-manifest
 ```
 
 ---

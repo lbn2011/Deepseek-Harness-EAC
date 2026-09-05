@@ -23,7 +23,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
-import { isPortable } from './release.js';
+import { isPortable, isTauriPortable } from './release.js';
 import type { ClientUpdCtx } from './types.js';
 
 /** buildApplyScript 的全部入参（路径/版本/运行时）。 */
@@ -314,6 +314,67 @@ export function buildSpawnCommandLine(script: string, args: string[]): string {
 }
 
 /**
+ * 生成 Tauri 便携版 apply-update.ps1（纯 ASCII）：整包 zip（zip 根 = 安装树
+ * 同构，见 make-portable.mjs）→ 解包到 .update-staging → 顶层项逐个
+ * 「旧改名 .old + 新移入」交换 → 清 staging → 重启壳。
+ *
+ * 回归约束（update-smoke.js Part B 端到端覆盖）：
+ *   · 等待对象是壳进程 PID（Rust spawn sidecar 时经 DSH_SHELL_PID 注入），
+ *     有界（150×2s）；AppPid=0 跳过等待（冒烟/已退出场景）。
+ *   · 交换按顶层项整体换（dsh-eac-shell.exe / sidecar/ / dsh-desktop/ …），
+ *     .dsh-portable 标记与 .ud 更新目录不在 staging 内，天然保留。
+ *   · 重启是尽力而为：文件交换已完成，拉起失败不把更新标记为失败。
+ */
+export function buildTauriPortableApplyScript(): string[] {
+  return [
+    'param(',
+    '  [string]$ZipPath = "",',
+    '  [string]$InstallDir = "",',
+    '  [int]$AppPid = 0',
+    ')',
+    '$ErrorActionPreference = "Stop"',
+    '$Log = Join-Path $PSScriptRoot "apply-update.log"',
+    'function Write-Log([string]$m) { Add-Content -LiteralPath $Log -Value ("[{0}] {1}" -f (Get-Date -Format s), $m) }',
+    'try {',
+    '  Write-Log "tauri portable update start"',
+    '  if ($AppPid -gt 0) {',
+    '    for ($i = 0; $i -lt 150; $i++) {',
+    '      Start-Sleep -Milliseconds 2000',
+    '      if (-not (Get-Process -Id $AppPid -ErrorAction SilentlyContinue)) { break }',
+    '    }',
+    '    Start-Sleep -Seconds 2',
+    '  }',
+    '  $exe = Join-Path $InstallDir "dsh-eac-shell.exe"',
+    '  $staging = Join-Path $InstallDir ".update-staging"',
+    '  if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }',
+    '  Write-Log ("extracting " + $ZipPath)',
+    '  Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force',
+    '  Get-ChildItem -LiteralPath $InstallDir -Directory -Filter "*.old" -ErrorAction SilentlyContinue | ForEach-Object {',
+    '    try { Remove-Item -LiteralPath $_.FullName -Recurse -Force } catch {}',
+    '  }',
+    '  Get-ChildItem -LiteralPath $staging | ForEach-Object {',
+    '    $dest = Join-Path $InstallDir $_.Name',
+    '    if (Test-Path -LiteralPath $dest) { Rename-Item -LiteralPath $dest -NewName ($_.Name + ".old") -Force }',
+    '    Move-Item -LiteralPath $_.FullName -Destination $dest -Force',
+    '    Write-Log ("swapped " + $_.Name)',
+    '  }',
+    '  Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue',
+    '  Write-Log "swap complete"',
+    // 重启是尽力而为：文件交换已完成，拉起失败不应把更新标记为失败
+    //（用户可手动启动；真实场景 exe 必然有效）。
+    '  try { Start-Process -FilePath $exe -WorkingDirectory $InstallDir } catch {',
+    '    Write-Log ("relaunch failed: " + $_.Exception.Message)',
+    '  }',
+    '  exit 0',
+    '} catch {',
+    '  Write-Log ("update failed: " + $_.Exception.Message)',
+    '  try { Start-Process -FilePath (Join-Path $InstallDir "dsh-eac-shell.exe") -WorkingDirectory $InstallDir } catch {}',
+    '  exit 1',
+    '}',
+  ];
+}
+
+/**
  * 生成安装版 apply-update.ps1（纯 ASCII，由 buildInstalledPowerShellArgs 的
  * 命名参数调用）：按 AppPid 有界等待主进程退出 → 超时仅结束该 PID →
  * 调用 apply-update.cmd（ActionScript）执行备份/Setup/回滚 → 按其退出码
@@ -459,7 +520,29 @@ export function applyUpdate(
   const nodeExe = (opts && opts.nodeExe) || '';
   let script: string;
   let child: ReturnType<typeof spawn>;
-  if (portable) {
+  if (isTauriPortable()) {
+    // Tauri 便携：exe + sidecar + dsh-desktop 目录树整体交换（P4/R6）。
+    // 等待对象是壳进程 PID（Rust spawn sidecar 时经 DSH_SHELL_PID 注入）。
+    // Task 6.1 拆分时此分支曾被误删 → 便携自更新把 zip 当 exe 覆盖（回归），
+    // 由 update-smoke.js Part B 端到端看护。
+    script = path.join(updateDir, 'apply-update.ps1');
+    fs.writeFileSync(script, buildTauriPortableApplyScript().join('\r\n') + '\r\n');
+    const powershell2 = path.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+    );
+    if (!fs.existsSync(powershell2)) throw new Error('找不到 Windows PowerShell: ' + powershell2);
+    const tauriInstallDir = process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : installDir;
+    const shellPid = parseInt(process.env.DSH_SHELL_PID || '', 10) || 0;
+    child = spawn(powershell2, [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
+      '-ZipPath', newExe, '-InstallDir', tauriInstallDir, '-AppPid', String(shellPid),
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } else if (portable) {
     script = path.join(updateDir, 'apply-update.cmd');
     const lines = buildApplyScript({
       newExe,

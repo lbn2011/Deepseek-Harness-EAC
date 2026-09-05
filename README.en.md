@@ -198,70 +198,104 @@ To report a bug or suggest a feature, visit [https://eac.dtyg123.dpdns.org/](htt
 
 ## Developer Documentation
 
-### Build from Source
+- Development guide: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — three-layer architecture, module discipline, build/test/smoke commands, data directories, bridge contract, troubleshooting (Chinese)
+- Release guide: [docs/RELEASE.md](docs/RELEASE.md) — full release & hot-update publishing workflow
+- Hot-update system: [docs/HOT-UPDATE.md](docs/HOT-UPDATE.md)
+- Docs index: [docs/README.md](docs/README.md) (ADRs, historical handover archive)
+
+### Build from Source (Tauri shell, default since v5.0)
 
 ```powershell
 cd dsh-desktop
 npm install
-npm run fetch-runtime    # bundle node.exe + npm CLI
+npm run fetch-runtime            # bundle node.exe + npm CLI
+npm run build                    # full tsc build (compiled .js is not committed; build first after cloning)
+npm run tauri:stage              # stage packaging resources (= node ../tauri-shell/stage-resources.mjs)
+cd ../tauri-shell
+npx -y @tauri-apps/cli@2 build   # release build + NSIS installer
+node make-portable.mjs           # portable zip (optional) -> target/release/portable/
+```
+
+> Rust toolchain: rustup + MSVC. NSIS is downloaded automatically by Tauri (`%LOCALAPPDATA%\tauri\NSIS`).
+> Occasional `makensis` mmap error (amplified by antivirus) — just rerun.
+
+<details>
+<summary>Electron shell (v4, frozen; fallback only)</summary>
+
+```powershell
+cd dsh-desktop
+npm install
+npm run fetch-runtime
 npm run dist             # build portable + NSIS installer -> dist/
 ```
 
 > Behind a firewall? Use the Electron mirror `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'` and the builder toolchain mirror `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`.
 
+</details>
+
 Run tests:
 
 ```powershell
-npm test                 # node --test test/*.test.mjs
+cd dsh-desktop
+npm test                                # node --test test/*.test.mjs (pretest runs tsc)
+
+# repository root
+node scripts/smoke/boot-smoke.js        # sidecar boot.start -> probe -> graceful shutdown
+node scripts/smoke/update-smoke.js      # self-update chain (mock release source + tree swap)
+node scripts/smoke/hotupdate-smoke.js   # component hot-update FF1-FF6, fully automated
+node scripts/smoke/gui-smoke.js         # Tauri shell GUI smoke (18 checks, cargo build first)
 ```
 
-### Architecture
+### Architecture (three-layer shell boundary since v5.0, ADR 0002)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Electron shell (main.js)                                │
-│  · Single-instance lock / window / menu / lifecycle      │
-│  · Session watcher (session-watcher.js) → notifications  │
-│  · Official updater (updater.js) → approved overlay      │
-│  · Client updater (client-updater.js) → download/replace │
-│  · Spawn node.exe from vendor|resources                  │
+│  L1 Rust shell (tauri-shell/src/main.rs)                 │
+│  · Single-instance lock / main+float windows / tray      │
+│  · Local WS method interception (win.* / menu / logs)    │
+│  · Shell pages (/loading /exit /died /update /about)     │
+│  · spawn sidecar (stdio JSON-RPC) + WS relay 127.0.0.1:19873 │
 └──────────────┬───────────────────────────────────────────┘
-               │  dsh web --host 127.0.0.1 --port 0
+               │  stdio JSON-RPC (L1 <-> L2)
                ▼
-       Bundled node.exe + @deepseek-ai/dsh
-       Path resolution: user overlay > bundled package
+┌──────────────────────────────────────────────────────────┐
+│  L2 Node sidecar (tauri-shell/sidecar/server.ts)         │
+│  · Mounts all lib/* modules + boot-server orchestration  │
+│  · Bridge surface (chrome.init / balance / plugins /     │
+│    rescue / client-update / hot-update / menu.action …)  │
+└──────────────┬───────────────────────────────────────────┘
+               │  spawn vendor/node + dsh web --port 0
+               ▼
+       L3 dsh kernel (@deepseek-ai/dsh, zero modifications)
        Prints "dsh web: http://127.0.0.1:<port>"
-               │  Parse URL, poll HTTP 200
+               │  webUrl reported back to L1
                ▼
-       Native window loads Web UI (localhost only)
+       Main window navigates to the Web UI (localhost only)
 ```
 
 ### Project Structure
 
 ```
-dsh-desktop/                  # Electron desktop app
-├── main.js                   # Electron main process
-├── updater.js                # Official dsh agent updater
-├── client-updater.js         # Desktop client updater
-├── balance.js                # DeepSeek balance query
-├── session-watcher.js        # Session completion watcher
-├── plugin-guard.js           # Plugin protection engine: snapshots/rollback/checks/repair/guarded startup/reports
-├── profile-module-heal.js    # Profile module shadowing repair: real directories + pnpm links
-├── preload.js                # Sandbox preload
-├── assets/                   # Loading/update pages, icons, skins, companion plugins
+dsh-desktop/                  # L2 business tree (staged wholesale into the install tree)
+├── lib/                      # modular business code (client-update / hot-update / update-flow
+│                             # / recovery-center / guard / server …; .ts committed,
+│                             #   .js is a local tsc artifact and not committed)
+├── client-updater.js etc.    # root facades (re-export lib/ implementations)
+├── assets/                   # icons, shell pages, skins, companion plugins
 │   ├── skins/                # 10 built-in Web UI skins
-│   └── plugins/              # Desktop companions: dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch
-│                             # Bundled community plugins: dsh-webui-market / dsh-tool-vision
-│                             # / dsh-soul-md / dsh-web-mobile-fix
-│                             # (vendor and self-contained runtime dependencies included in the repository)
-├── scripts/                  # Build and development helper scripts
-├── build/icon.png            # electron-builder icon
-├── vendor/                   # Bundled node.exe / npm CLI (not committed)
-├── electron-builder.yml      # Build configuration
-└── dist/                     # Build output (not committed; published to Releases)
-openclaw-dsh-bridge/          # WeChat bridge plugin (optional, research-grade)
-research/                     # Third-party WeChat / bridge protocol research
+│   └── plugins/              # companion + bundled community plugins (vendored, in repo)
+├── scripts/                  # build and development helper scripts
+├── test/                     # node --test unit tests
+└── vendor/                   # bundled node.exe / npm CLI (not committed)
+tauri-shell/                  # L1 Rust shell
+├── src/main.rs               # shell body (window/tray/lifecycle/WS bridge)
+├── sidecar/                  # server.ts (L2 entry) + bridge.ts (page bridge)
+├── stage-resources.mjs       # packaging resource staging -> staged-resources/
+└── make-portable.mjs         # portable zip assembly
+scripts/smoke/                # end-to-end smoke scripts (boot/update/hotupdate/gui/rescue/…)
+updates/                      # hot-update publishing dir (hotupdate.json / release.json / packages/)
+docs/                         # documentation set (index: docs/README.md)
+.github/workflows/            # ci / release-tauri / updates-check / release-manifest
 ```
 
 ---
