@@ -33,18 +33,29 @@
 
 这些批次与我方 bug 修复轮大量同题（锁竞态/原子写/WS 握手/恢复链），但**实现不同**——建议以「题」为单位对照我方 `docs/bug-report-2026-09-05.md` 与两轮修复提交（`c7566fa`、`d841ca4`）确认覆盖，缺题再移植。
 
-## 插件资产更新（我方内置插件树未跟上游版本）
+## 插件资产更新（✅ 已采纳 —— 2026-09-06 二次决议）
 
-| 上游提交 | 内容 |
-| --- | --- |
-| `ede6812` | 内置插件更新：picturereader 3.3.1、computer-user 0.3.6（110/133 文件未取入） |
-| `be5c5ad` | picturereader 3.3.2 图片桥（1/9） |
-| `204f38a` / `a707951` | 内置 dsh-raw-html 托管版 + 5.1 启动修复 |
-| `f45f25b` | 5.2.0：手机控制替换为内置喵丝滑 + 手机桥重写为完整 Web UI 反向代理 |
-| `0dbe628` / `3da4275` / `eb994d7` / `5d90853` | better-sidebar 系列：文件预览恢复 / 全新安装默认展开 / 宿主侧栏宽度保留 / 子代理实时行 |
-| `ef0aa46` / `bd7d0d1` / `a996d91` / `9cebe13` / `9432209` / `28b00d8` | 电脑操作设置保存、人设卡组合、双滚动条根治、透明裁切、模型图片输入开关、设置弹窗宽度/拖拽 |
+> **二次 grill 决议（2026-09-06）**：插件与更新方向以上游为主。`assets/plugins`
+> 整树已切到 upsterm/main（47 目录，含上游退役的 dsh-stt / settings-nav-custom /
+> tool-vision / file-drop，均已登记 RETIRED_BUILTIN_PLUGINS 由启动链清理老
+> profile 残留）；注册表三表（COMPANION_PLUGINS / RETIRED / 更新源）与上游
+> companion-sync 对齐；随包测试改用上游版本并以「采纳上游行为」修订我方契约
+> 断言（scope.load 名单、titlebar 兼容选择器哈希、better-sidebar lazy-chunks
+> 断言移除、nav-custom 相关断言移除）。computer-user-approval.test.ts 上游
+> 自身即失败（上游插件已移除 requestApproval 参数、测试未跟上），未采纳。
 
-插件树（`assets/plugins/`）在我方与上游各有演化：升级内置插件版本时以**上游提交为版本真相**整体接入单个插件目录，勿按文件拼。
+| 上游提交 | 内容 | 状态 |
+| --- | --- | --- |
+| `ede6812` | 内置插件更新：picturereader 3.3.1、computer-user 0.3.6 | ✅ 已采纳（整树切上游） |
+| `be5c5ad` | picturereader 3.3.2 图片桥 | ✅ 已采纳 |
+| `204f38a` / `a707951` | 内置 dsh-raw-html 托管版 + 5.1 启动修复 | ✅ 已采纳 |
+| `f45f25b` | 5.2.0：手机控制替换为内置喵丝滑 + 手机桥重写为完整 Web UI 反向代理 | ✅ 已采纳 |
+| `0dbe628` / `3da4275` / `eb994d7` / `5d90853` | better-sidebar 系列：文件预览恢复 / 全新安装默认展开 / 宿主侧栏宽度保留 / 子代理实时行 | ✅ 已采纳 |
+| `ef0aa46` / `bd7d0d1` / `a996d91` / `9cebe13` / `9432209` / `28b00d8` | 电脑操作设置保存、人设卡组合、双滚动条根治、透明裁切、模型图片输入开关、设置弹窗宽度/拖拽 | ✅ 已采纳（随插件树） |
+| `d2ab2e2` | extension-host：并发重启定时器去重 + started 转移被拒即终止 Host + notify 隔离 | ✅ 已采纳（自动并入，语义完好） |
+
+**遗留注意**：上游 dsh-eac-core-bridge 新版调用 `ctx.effect`（Core Bridge
+cordis 组件新能力），上游 sdk/index.ts 已一并采纳提供该能力。
 
 ## CI/构建（对我方 CI 有参考价值）
 
@@ -67,5 +78,5 @@
 
 - [ ] 高价值候选逐项核对（installer ×2 / stage / release 预取 / main.rs 体验项 ×3 / boot 凭据 ×3 / 菜单外链）
 - [ ] 上游批次大扫除按题对照我方修复清单
-- [ ] 内置插件版本升级决策（picturereader 3.3.2 / computer-user 0.3.6 / raw-html / better-sidebar 系列）
+- [x] 内置插件版本升级（picturereader 3.3.2 / computer-user 0.3.6 / raw-html / better-sidebar 系列）——2026-09-06 整树对齐上游完成
 - [ ] CI 参考项按需采纳

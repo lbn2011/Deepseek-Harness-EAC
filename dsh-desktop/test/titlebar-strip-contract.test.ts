@@ -16,5 +16,7 @@ test('Tauri bridge 从同一标题栏高度声明页面兼容属性', () => {
 test('vendored better-sidebar honors the attribute', () => {
   const client = readFileSync(join(repo, 'dsh-desktop', 'assets', 'plugins', 'dsh-better-sidebar', 'lib', 'client.js'), 'utf8');
   assert.match(client, /data-dsh-title-bar-height/);
-  assert.match(client, /body\[data-dsh-title-bar-compat\] \.dxPSYW_panel\{padding-top:var\(--dsh-title-bar-strip/);
+  // 5.3.x 上游 bundle 的 CSS Modules 哈希由 .dxPSYW_panel 变为 .nArs4W_panel，
+  // 契约本身不变：compat 属性存在时 panel 顶部让位标题栏条带。
+  assert.match(client, /body\[data-dsh-title-bar-compat\] \.nArs4W_panel\{padding-top:var\(--dsh-title-bar-strip/);
 });

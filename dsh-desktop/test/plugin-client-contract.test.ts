@@ -20,8 +20,9 @@ const USES_PLUGINS = [
   'dsh-session-manager/lib/client.js',
 ];
 const SCOPE_LOAD_PLUGINS = [
-  'picturereader/client.js',
-  'computer-user/client.js',
+  // picturereader 与 computer-user 移出：上游版本重新使用 scope.load
+  // （插件与更新方向以上游为准，见 docs/upstream-backport-review-2026-09-06.md）；
+  // 宿主 client 运行时保留 legacy 模块全局作为兜底。
   'dsh-soul-md/client.js',
 ];
 
@@ -38,7 +39,7 @@ test('5 个 uSES 插件：不再 require ui-renderer，且内联 shim 存在、�
   }
 });
 
-test('3 个 scope.load 插件：不再出现 scope.load 调用', () => {
+test('1 个 scope.load 插件：不再出现 scope.load 调用', () => {
   for (const rel of SCOPE_LOAD_PLUGINS) {
     const src = readFileSync(join(PLUGINS, rel), 'utf8');
     assert.doesNotMatch(src, /scope\.load/, `${rel} 仍引用 scope.load`);

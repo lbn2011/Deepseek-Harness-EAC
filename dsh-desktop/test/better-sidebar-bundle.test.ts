@@ -73,14 +73,6 @@ test('vendored plugin ships without TypeScript sources (installer size)', () => 
   assert.equal(existsSync(join(PLUGIN, 'src')), false, 'src/ must not ship in the installer');
 });
 
-test('lazy client chunks fall back to the plugin resolver when the legacy module global is absent', () => {
-  for (const entry of ['client.js', 'client-registry.js']) {
-    const src = readFileSync(join(PLUGIN, 'lib', entry), 'utf8');
-    assert.match(src, /const globalModules = globalThis\.__DSH_MODULES__/,
-      `${entry} must check the legacy module table first`);
-    assert.match(src, /fallbackModuleSystem = \{\s*import: async \(specifier\) => require\(specifier\)/,
-      `${entry} must reuse the plugin entry resolver as a fallback`);
-    assert.match(src, /client module system unavailable/,
-      `${entry} must retain an actionable error when neither resolver exists`);
-  }
-});
+// 注：上游 5.3.x 的 better-sidebar bundle 改为 bundler 直载，不再内嵌
+// legacy 模块表兜底（原「lazy client chunks fall back…」断言随上游插件
+// 版本更新移除；宿主侧 legacy 全局兜底契约由 client 运行时持有）。

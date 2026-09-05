@@ -292,7 +292,7 @@ copyRequired(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc')
 // 覆写为 lite（installer-hooks.nsh POSTINSTALL）。便携包保持缺省完整版。
 writeFileSync(path.join(staged, 'dsh-desktop', 'profile.txt'), 'full\n');
 
-console.log('[stage] assets（114MB：38 插件 + 10 皮肤 + 图标）');
+console.log('[stage] assets（~125MB：47 插件 + 10 皮肤 + 图标）');
 cpSync(path.join(dd, 'assets'), path.join(staged, 'dsh-desktop', 'assets'), { recursive: true });
 validatePluginTree(path.join(dd, 'assets', 'plugins'), '源');
 validatePluginTree(path.join(staged, 'dsh-desktop', 'assets', 'plugins'), 'staging');

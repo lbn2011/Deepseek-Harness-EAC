@@ -50,7 +50,7 @@ Deepseek-Harness-EAC/
 │   │   ├── guard.ts             #   插件保护（快照/回滚）
 │   │   ├── server.ts / boot.ts  #   dsh web 服务编排
 │   │   └── …                    #   其余模块见 server.ts 顶部 load 表
-│   ├── assets/                  # 插件(38)/皮肤(10)/图标/壳页 HTML（114MB，随包分发）
+│   ├── assets/                  # 插件(47)/皮肤(10)/图标/壳页 HTML（~125MB，随包分发）
 │   ├── scripts/                 # 构建与开发辅助脚本
 │   ├── test/                    # node --test 单测
 │   └── vendor/                  # 内置 node.exe/npm（fetch-runtime 生成，不入库）
