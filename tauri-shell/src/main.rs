@@ -2124,11 +2124,12 @@ fn main() {
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu)
-                // BUG-G-105：tray-icon 默认 menu_on_left_click=true，左键单击会
+                // BUG-G-105：tray-icon 默认左键单击弹菜单，左键单击会
                 // 先弹菜单、再由下面的 Click 处理器 show+set_focus 把菜单顶掉
                 //（表现为「托盘菜单打不开/闪一下即关」）。左键专职切换显隐，
-                // 菜单只留右键。
-                .menu_on_left_click(false);
+                // 菜单只留右键。（show_menu_on_left_click：旧 API
+                // menu_on_left_click 已弃用，stable clippy -D warnings 红）
+                .show_menu_on_left_click(false);
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }

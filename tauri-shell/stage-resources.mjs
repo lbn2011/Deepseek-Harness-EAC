@@ -318,21 +318,24 @@ writeStagedPlatformStamp(platformStamp, targetPlatform);
 // 热更新基线（主设计 §7.5）：baselineSeq = 构建时仓库 hotupdate.json 的
 // latestSeq。客户端启动时若安装树 baselineSeq > state.appliedSeq，说明经历
 // 了正式更新 → 热更状态重置为新基线（旧热更 staging/backups 一并失效）。
-// updates/hotupdate.json 不存在（旧 tag 构建）时跳过，客户端按缺省基线 0。
+// hotupdate-baseline.json 是 tauri.conf.json 的文件映射资源，tauri-build 严格
+// 校验存在性：updates/hotupdate.json 缺失/损坏（旧 tag 构建）时必须仍写出
+// baselineSeq=0 的基线文件，否则 tauri build 直接红。
+let baselineSeq = 0;
+let baselineNote = '';
 try {
   const huManifest = JSON.parse(readFileSync(path.join(root, 'updates', 'hotupdate.json'), 'utf8'));
-  const appVer = JSON.parse(readFileSync(path.join(dd, 'package.json'), 'utf8')).version || '';
-  const baselineSeq = Number(huManifest.latestSeq) || 0;
-  writeFileSync(path.join(staged, 'hotupdate-baseline.json'), JSON.stringify({
-    baselineSeq,
-    appVersion: appVer,
-    generatedAt: new Date().toISOString(),
-  }, null, 2) + '
-');
-  console.log('[stage] hotupdate-baseline.json (baselineSeq=' + baselineSeq + ')');
+  baselineSeq = Number(huManifest.latestSeq) || 0;
 } catch (e) {
-  console.log('[stage] hotupdate-baseline.json 跳过: ' + (e && e.message));
+  baselineNote = '（updates/hotupdate.json 缺失/损坏，按 0 处理: ' + (e && e.message) + '）';
 }
+const appVer = JSON.parse(readFileSync(path.join(dd, 'package.json'), 'utf8')).version || '';
+writeFileSync(path.join(staged, 'hotupdate-baseline.json'), JSON.stringify({
+  baselineSeq,
+  appVersion: appVer,
+  generatedAt: new Date().toISOString(),
+}, null, 2) + '\n');
+console.log('[stage] hotupdate-baseline.json (baselineSeq=' + baselineSeq + ')' + baselineNote);
 
 // dsh-desktop 锚点补丁（patch-deps：可选升级字段 / picker 退出码 / 设置左栏滚动）——
 // npm ci 从 registry 全新安装会还原成未打补丁的内核文件，必须在 staged 树上重放。

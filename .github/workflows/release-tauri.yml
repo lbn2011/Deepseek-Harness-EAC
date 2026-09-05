@@ -103,12 +103,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p ../tauri-shell/staged-resources/sidecar ../tauri-shell/staged-resources/dsh-desktop
+          # tauri-build 严格校验文件映射资源：文件映射占位（真实文件由 tauri:stage 装配）
+          touch ../tauri-shell/staged-resources/WebView2Loader.dll ../tauri-shell/staged-resources/hotupdate-baseline.json
           cargo clippy --manifest-path ../tauri-shell/Cargo.toml --all-targets -- -D warnings
 
       - name: Tauri 壳测试（先建 staged-resources 占位，满足 tauri-build 资源校验）
         shell: bash
         run: |
           mkdir -p ../tauri-shell/staged-resources/sidecar ../tauri-shell/staged-resources/dsh-desktop
+          # tauri-build 严格校验文件映射资源：文件映射占位（真实文件由 tauri:stage 装配）
+          touch ../tauri-shell/staged-resources/WebView2Loader.dll ../tauri-shell/staged-resources/hotupdate-baseline.json
           cargo test --manifest-path ../tauri-shell/Cargo.toml --no-fail-fast
 
       - name: 构建 Rust 原生模块（Node 测试前生成平台原生 index.node）
