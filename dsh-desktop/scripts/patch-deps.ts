@@ -33,7 +33,7 @@ function patchPickerWorker(): void {
     return;
   }
   src = src.replace(OLD_RE, NEW_BLOCK);
-  writeFileAtomic(target, src);
+  fs.writeFileSync(target, src);
   console.log('[patch-deps] 已补丁 picker-native：worker 退出上报 exit code / signal');
 }
 
@@ -71,7 +71,7 @@ function patchSettingsNavScroll(): void {
     '{flex-direction:column;gap:4px;display:flex;min-height:0;overflow-y:auto;padding-bottom:10px;/*' + NAV_SCROLL_MARKER + '*/}'
   );
   src = src.replace(oldNav, newNav).replace(oldNavList, newNavList);
-  writeFileAtomic(file, src);
+  fs.writeFileSync(file, src);
   console.log('[patch-deps] 已补丁 settings-general：设置弹窗左栏可滚动，底部条目不再被裁掉');
 }
 
@@ -108,7 +108,7 @@ function patchOptionalEscalationFields(): void {
       continue;
     }
     src = src.replace(OPTIONAL_ESCALATION_OLD, OPTIONAL_ESCALATION_NEW);
-    writeFileAtomic(file, src);
+    fs.writeFileSync(file, src);
     console.log('[patch-deps] 已补丁可选升级字段：' + path.basename(path.dirname(path.dirname(file))));
   }
 }
@@ -198,7 +198,7 @@ function patchAgentPresetMenu(file?: string): boolean {
     .replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew)
     .replace(AGENT_PRESET_ZH_ANCHOR, AGENT_PRESET_ZH_ANCHOR + zhDictAdd)
     .replace(AGENT_PRESET_EN_ANCHOR, AGENT_PRESET_EN_ANCHOR + enDictAdd);
-  writeFileAtomic(target, src);
+  fs.writeFileSync(target, src);
   console.log('[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单');
   return true;
 }
@@ -252,11 +252,6 @@ const SUBMENU_BTN_ANCHOR = 'f.jsxs("button",{type:"button",role:"menuitem",class
 const SUBMENU_BTN_NEW = 'f.jsxs("button",{type:"button",role:"menuitem",className:Re.item,style:{alignItems:"flex-start",flexShrink:0},disabled:he.disabled';
 const SUBMENU_LABEL_ANCHOR = 'f.jsx("span",{className:Re.itemLabel,children:he.label})';
 const SUBMENU_LABEL_NEW = 'f.jsx("span",{className:Re.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:he.label})';
-// 0.1.2-alpha.1 产物形态（压缩变量名变为 d/Pe/fe； submenu 项才有 fe.label）。
-const SUBMENU_BTN_ANCHOR_012 = 'd.jsxs("button",{type:"button",role:"menuitem",className:Pe.item,disabled:fe.disabled';
-const SUBMENU_BTN_NEW_012 = 'd.jsxs("button",{type:"button",role:"menuitem",className:Pe.item,style:{alignItems:"flex-start",flexShrink:0},disabled:fe.disabled';
-const SUBMENU_LABEL_ANCHOR_012 = 'd.jsx("span",{className:Pe.itemLabel,children:fe.label})';
-const SUBMENU_LABEL_NEW_012 = 'd.jsx("span",{className:Pe.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:fe.label})';
 
 function patchMenuSubmenuScroll(file?: string): boolean {
   let target: string | undefined = file;
@@ -338,70 +333,28 @@ function patchMenuSubmenuScroll(file?: string): boolean {
     console.log('[patch-deps] 已补丁主 bundle：二级菜单悬停离开延迟关闭（移回一级菜单保持）');
   }
   if (!src.includes(SUBMENU_ITEM_MARKER)) {
-    // 双候选：rc.2（Re/he/f）与 0.1.2（Pe/fe/d）两代产物形态。
-    const use012 = src.includes(SUBMENU_BTN_ANCHOR_012) && src.includes(SUBMENU_LABEL_ANCHOR_012);
-    const btnAnchor = use012 ? SUBMENU_BTN_ANCHOR_012 : SUBMENU_BTN_ANCHOR;
-    const btnNew = use012 ? SUBMENU_BTN_NEW_012 : SUBMENU_BTN_NEW;
-    const labelAnchor = use012 ? SUBMENU_LABEL_ANCHOR_012 : SUBMENU_LABEL_ANCHOR;
-    const labelNew = use012 ? SUBMENU_LABEL_NEW_012 : SUBMENU_LABEL_NEW;
-    const btnIdx = src.indexOf(btnAnchor);
-    const labelIdx = btnIdx >= 0 ? src.indexOf(labelAnchor, btnIdx) : -1;
+    const btnIdx = src.indexOf(SUBMENU_BTN_ANCHOR);
+    const labelIdx = btnIdx >= 0 ? src.indexOf(SUBMENU_LABEL_ANCHOR, btnIdx) : -1;
     if (btnIdx < 0 || labelIdx < 0) {
       console.log('[patch-deps] Menu submenu item 未匹配到目标代码（版本可能已更新），跳过');
     } else {
-      src = src.slice(0, btnIdx) + btnNew + src.slice(btnIdx + btnAnchor.length);
-      const l2 = src.indexOf(labelAnchor, btnIdx);
-      src = src.slice(0, l2) + labelNew + src.slice(l2 + labelAnchor.length);
+      src = src.slice(0, btnIdx) + SUBMENU_BTN_NEW + src.slice(btnIdx + SUBMENU_BTN_ANCHOR.length);
+      const l2 = src.indexOf(SUBMENU_LABEL_ANCHOR, btnIdx);
+      src = src.slice(0, l2) + SUBMENU_LABEL_NEW + src.slice(l2 + SUBMENU_LABEL_ANCHOR.length);
       changed = true;
       console.log('[patch-deps] 已补丁主 bundle：submenu 项两行布局不再被裁剪');
     }
   }
-  if (changed) writeFileAtomic(target, src);
-  return true;
-}
-
-// client-modules 解析签名恢复：上游 0.1.2 已正确区分 Node 24 v2
-// (parentURL, { specifier, attributes }) 与 Node 22 v1 的位置参数。旧版
-// patch-deps 误把两者统一成位置参数，导致 Node 24 把包名当 URL 后静默清空
-// boot graph。这里只修复已经被旧补丁改坏的安装树；上游原始实现保持不动。
-const CLIENT_MODULES_RESOLVE_TARGET = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-modules', 'lib', 'index.js');
-const CLIENT_MODULES_RESOLVE_EXPECTED = 'internal.version === "v2" ? internal.resolveSync(baseUrl, {\n\t\t\t\tspecifier: loaderName,\n\t\t\t\tattributes: {}\n\t\t\t}).url : internal.resolveSync(loaderName, baseUrl, {}).url';
-const CLIENT_MODULES_RESOLVE_REVERSED = 'internal.resolveSync(loaderName, baseUrl, {}).url';
-const CLIENT_MODULES_RESOLVE_PARENT_FIRST = 'internal.resolveSync(baseUrl, loaderName, {}).url';
-
-function patchClientModulesResolve(targetFile = CLIENT_MODULES_RESOLVE_TARGET): boolean {
-  if (!fs.existsSync(targetFile)) {
-    console.log('[patch-deps] dsh-client-modules 不存在，跳过');
-    return false;
-  }
-  let src = fs.readFileSync(targetFile, 'utf8');
-  if (src.includes(CLIENT_MODULES_RESOLVE_EXPECTED)) {
-    console.log('[patch-deps] client-modules Node 22/24 解析签名正确，跳过');
-    return false;
-  }
-  if (src.includes(CLIENT_MODULES_RESOLVE_REVERSED)) {
-    src = src.replace(CLIENT_MODULES_RESOLVE_REVERSED, CLIENT_MODULES_RESOLVE_EXPECTED);
-  } else if (src.includes(CLIENT_MODULES_RESOLVE_PARENT_FIRST)) {
-    src = src.replace(CLIENT_MODULES_RESOLVE_PARENT_FIRST, CLIENT_MODULES_RESOLVE_EXPECTED);
-  } else {
-    console.log('[patch-deps] client-modules 解析签名锚点未命中（上游可能已更新），跳过');
-    return false;
-  }
-  writeFileAtomic(targetFile, src);
-  console.log('[patch-deps] 已恢复 client-modules Node 22/24 分支解析签名（boot graph 清零修复）');
+  if (changed) fs.writeFileSync(target, src);
   return true;
 }
 
 function main(): void {
   patchPickerWorker();
   patchSettingsNavScroll();
-  patchSettingsPanelResize();
-  patchSettingsWriteFailure();
-  patchModelImageInputToggle();
   patchOptionalEscalationFields();
   patchAgentPresetMenu();
   patchMenuSubmenuScroll();
-  patchClientModulesResolve();
 }
 
 // 单测 require 本模块时不应改写真实 node_modules；仅命令行直接执行时跑 main()。
@@ -409,12 +362,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = {
-  patchAgentPresetMenu,
-  patchMenuSubmenuScroll,
-  patchClientModulesResolve,
-  patchModelImageInputSource,
-  patchModelImageInputToggle,
-  patchSettingsWriteFailureSource,
-  patchSettingsWriteFailure,
-};
+module.exports = { patchAgentPresetMenu, patchMenuSubmenuScroll };

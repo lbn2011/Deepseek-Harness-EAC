@@ -2,7 +2,7 @@
 
 <p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
-<h1>DSH-Desktop-EAC — 揽尽万象</h1>
+<h1>Deepseek Harness EAC — 揽尽万象</h1>
 
 <p><strong>EAC = Embracing All Creation（揽尽万象）</strong></p>
 

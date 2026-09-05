@@ -25,8 +25,8 @@ test('githubProxyUrl 只代理 GitHub 资产地址', () => {
 
 test('downloadUrls 候选序：代理优先，随后原始地址与其他源', () => {
   assert.deepEqual(downloadUrls(GITHUB_ASSET, [GITEE_ASSET]), [
-    GITHUB_ASSET,
     'https://gh.geekertao.top/' + GITHUB_ASSET,
+    GITHUB_ASSET,
     GITEE_ASSET,
   ]);
 });

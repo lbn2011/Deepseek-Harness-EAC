@@ -16,11 +16,11 @@
 // 前置：pnpm 版本必须等于内核 packageManager 钉住的版本（脚本自校验）。
 // 用法：npm run fetch-kernel [-- <tag>]（默认 dsh-v0.1.2-alpha.1）
 
-import fs = require('node:fs');
-import crypto = require('node:crypto');
-import os = require('node:os');
-import path = require('node:path');
-import cp = require('node:child_process');
+import * as fs from 'node:fs';
+import * as crypto from 'node:crypto';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as cp from 'node:child_process';
 
 const REPO = 'deepseek-ai/deepseek-harness';
 const DEFAULT_TAG = 'dsh-v0.1.3-alpha.1';

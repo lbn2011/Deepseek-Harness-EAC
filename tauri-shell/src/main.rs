@@ -2550,7 +2550,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {    let method = v.
             app.request_restart();
         }
         "shell.show-main-window" => {
-            // 通知点击/任务完成等场景聚焦主窗（= Electron second-instance 行为）。
+            // 通知点击/任务完成等场景聚焦主窗（= 旧壳 second-instance 行为）。
             let app2 = app.clone();
             let _ = app.run_on_main_thread(move || {
                 use tauri::Manager;

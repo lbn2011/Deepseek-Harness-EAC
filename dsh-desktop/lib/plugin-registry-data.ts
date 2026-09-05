@@ -94,6 +94,20 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-phone', name: 'dsh-phone', dir: 'dsh-phone' },
   { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt' },
   { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget' },
+  // 上游同步（746483c：5.2–5.4 线内置插件并入，注册行采自上游 companion-sync）。
+  // 喵丝滑（Phant0Meow/dsh-meow-smooth，MIT）：手机端 UI 交互优化 + 通知系统，
+  // 随 5.2.0 起替代自研 mobile-app.html 续聊客户端。
+  { id: 'meow-smooth', name: 'meow-smooth', dir: 'dsh-meow-smooth', config: { enabled: true } },
+  // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：
+  // 消息 HTML 渲染为界面（卡片 / KaTeX / Mermaid / 内置书法字体）。
+  { id: 'dsh-raw-html', name: 'dsh-raw-html', dir: 'dsh-raw-html' },
+  // 壳层语言兼容层：为未提供本地化词典的内置插件提供英文兼容文案。
+  { id: 'eac-locale-compat', name: 'dsh-eac-locale-compat', dir: 'dsh-eac-locale-compat' },
+  // 视口锁定（CSS Modules 哈希类的壳层垫片替代方案）。
+  { id: 'viewport-lock', name: 'dsh-viewport-lock', dir: 'dsh-viewport-lock' },
+  // 输入灵动岛（says693/dsh-composer-dynamic-island 2.1.0，MIT）：输入区按钮
+  // 收纳为向上展开的紧凑岛。
+  { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island', dir: 'dsh-composer-dynamic-island' },
 ];
 
 /** 曾内置、现已从内置清单移除的插件（vnext 同步自 main v4.5）。 */

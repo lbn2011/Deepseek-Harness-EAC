@@ -74,8 +74,6 @@ test('扩展注册表：档案登记/失败归因/隔离标记（Phase 0 行为�
     assert.ok(pet.lastError.includes('fullRoot'));
     assert.ok(pet.lastErrorAt);
 
-    // 5.3.3：clearStartFailure 只清 lastError 字段，状态转移一律走状态机
-    // （直接置 installed 会制造 quarantined→installed 非法转移、静默击穿隔离）。
     reg.clearStartFailure('dsh-pet');
     list = reg.listRegistryEntries();
     assert.equal(list.find((p) => p.id === 'dsh-pet').state, 'installed');

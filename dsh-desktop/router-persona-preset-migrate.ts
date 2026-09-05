@@ -1,9 +1,9 @@
 'use strict';
 
-import crypto = require('node:crypto');
-import fs = require('node:fs');
-import path = require('node:path');
-import { writeFileAtomic } from './lib/atomic-json';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { writeFileAtomic } from './lib/atomic-json.js';
 
 const MANAGED_ROUTER_PRESETS = Object.freeze([
   'router-standard',
@@ -73,7 +73,7 @@ function migrateManagedRouterPersonaPresets(
   ));
 }
 
-export = {
+export {
   BUGGY_ROUTER_CORE_HASHES,
   MANAGED_ROUTER_PRESETS,
   migrateManagedRouterPersonaPresets,

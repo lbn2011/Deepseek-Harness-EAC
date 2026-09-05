@@ -27,7 +27,6 @@ import type {
   SdkEventParams,
 } from '../../../shared/protocol.js';
 import type { HostInitParams } from '../../../shared/protocol.js';
-import { writeJsonAtomic } from '../../atomic-json.js';
 
 /** SDK 与 host-bootstrap 之间的 IO 通道（宿主注入，便于单测）。 */
 export interface SdkIo {
@@ -66,16 +65,12 @@ export function validateArgs(
 // 权限门：路径围栏与受控能力面（deny-by-default：未声明即不可见）
 // ---------------------------------------------------------------------------
 
-/** 路径是否落在任一白名单根内（含自身；防 ../ 逃逸）。win32 比较大小写
- * 不敏感（路径语义如此），否则 `C:\Data` 白名单会误拒 `c:\data\x`。 */
+/** 路径是否落在任一白名单根内（含自身；防 ../ 逃逸）。 */
 function withinRoots(p: string, roots: readonly string[]): boolean {
   const norm = path.resolve(p);
-  const lower = process.platform === 'win32';
-  const normCmp = lower ? norm.toLowerCase() : norm;
   return roots.some((r) => {
     const root = path.resolve(r);
-    const rootCmp = lower ? root.toLowerCase() : root;
-    return normCmp === rootCmp || normCmp.startsWith(rootCmp + path.sep);
+    return norm === root || norm.startsWith(root + path.sep);
   });
 }
 
@@ -141,7 +136,10 @@ function createSettings(dataDir: string): SettingsStore {
     set(key: string, value: unknown): void {
       const all = read();
       all[key] = value;
-      writeJsonAtomic(file, all);
+      fs.mkdirSync(dataDir, { recursive: true });
+      const tmp = file + '.tmp-' + Date.now();
+      fs.writeFileSync(tmp, JSON.stringify(all, null, 2) + '\n');
+      fs.renameSync(tmp, file);
     },
     all(): Record<string, unknown> {
       return read();
@@ -191,9 +189,7 @@ export function buildSdk(params: HostInitParams, io: SdkIo): { ctx: Record<strin
       handler?: (args: unknown) => Promise<unknown> | unknown,
     ): void => {
       const meta: HostToolMeta =
-        typeof metaOrHandler === 'function' ? { name } : { ...metaOrHandler, name };
-      // meta.name 强制等于注册键 name：init 应答按 meta.name 上报，宿主按
-      // 键查找 —— 键名错位会让「注册成功、调用必报 unknown tool」。
+        typeof metaOrHandler === 'function' ? { name } : { ...metaOrHandler, name: metaOrHandler.name || name };
       const fn = typeof metaOrHandler === 'function' ? metaOrHandler : handler;
       if (typeof fn !== 'function') throw new Error(`registerTool(${name}) 缺少处理函数`);
       if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name)) throw new Error(`工具名 ${name} 非法（[A-Za-z0-9_.-]，≤64）`);

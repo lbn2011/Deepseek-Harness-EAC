@@ -25,7 +25,6 @@
 
 import { extname } from 'node:path';
 import { BYTE_CAP, MAX_PIXELS } from './tool.js';
-import { getRuntimeConfig } from './runtime.js';
 
 const CORE_URL = new URL('./core.js', import.meta.url).href;
 let coreCache = { url: null, mtime: -1, module: null };
@@ -364,9 +363,7 @@ export function createImageBatchTool(ctx) {
       const results = new Map(); // index -> { lines, note }
       const runOcr = async (item) => {
         try {
-          // Engine default follows the plugin setting ("windows" when unset).
-          const engine = getRuntimeConfig().ocr?.engine ?? 'windows';
-          const res = await ocrFn(item.raw, item.ext, { engine });
+          const res = await ocrFn(item.raw, item.ext, { engine: 'windows' });
           results.set(item.index, { lines: res?.lines ?? [] });
           return results.get(item.index);
         } catch (error) {

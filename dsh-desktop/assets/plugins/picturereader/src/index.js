@@ -33,7 +33,7 @@ import { NS } from './config.js';
 import { settingsNamespace } from '@deepseek-ai/dsh-settings';
 import z from '@deepseek-ai/schemastery';
 import { ensureSettingsNamespaceExposed } from './settings-expose.js';
-import { setRuntimeSource, getRuntimeConfig } from './runtime.js';
+import { setRuntimeSource } from './runtime.js';
 import { attachImageBridge } from './bridge.js';
 import { registerTwinAdapters } from './picturereader-vision.mjs';
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
@@ -202,7 +202,7 @@ const Config = z.object({
   ocr_engine: z
     .string()
     .default('windows')
-    .description('默认 OCR 引擎：windows / paddle / rapid / macos'),
+    .description('默认 OCR 引擎：windows / paddle / rapid'),
   vlm_timeout_ms: z
     .number()
     .default(300000)
@@ -269,14 +269,12 @@ const Config = z.object({
 export const inject = ['tools', 'fs', 'llm', 'attachments'];
 
 export function apply(ctx, config) {
-  // 内核 0.1.2 起 settings-controller 的 describe() 原生枚举全部注册命名空间
-  // （rc.2 时代 dsh-host-apiproxy 的 WEB_SETTINGS_NAMESPACES 白名单连同整个
-  // apiproxy 包已被移除），本补丁退役；调用注释保留作老内核回退参考。
-  // try {
-  //   ensureSettingsNamespaceExposed(ctx, NS, ctx.logger);
-  // } catch (error) {
-  //   ctx.logger?.warn?.(`[picturereader] settings-expose failed: ${String(error)}`);
-  // }
+  // ── 把命名空间加进 dsh-host-apiproxy 白名单 ──
+  try {
+    ensureSettingsNamespaceExposed(ctx, NS, ctx.logger);
+  } catch (error) {
+    ctx.logger?.warn?.(`[picturereader] settings-expose failed: ${String(error)}`);
+  }
 
   // ── 运行时快照：工具执行时惰性读最新 mode / VLM 配置 ──
   let sourceGetter = null;
@@ -315,7 +313,7 @@ export function apply(ctx, config) {
       const handler = async (req, res) => {
         try {
           const data = await readFile(MODELS_CACHE, 'utf-8');
-          if (getRuntimeConfig()?.debug) console.log('[picturereader] models route: read', data.length, 'bytes from', MODELS_CACHE);
+          console.log('[picturereader] models route: read', data.length, 'bytes from', MODELS_CACHE);
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(data);
         } catch (err) {

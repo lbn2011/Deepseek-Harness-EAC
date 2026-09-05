@@ -13,8 +13,8 @@
 // 幂等：重复运行按当前 tarball 名单整体重写 @deepseek-ai/* 相关字段。
 // 用法：npm run gen-kernel-overrides [-- [vendor 子目录名]]
 
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '..');
 const VENDOR_KERNEL = path.join(ROOT, 'vendor', 'kernel');

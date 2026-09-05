@@ -48,8 +48,9 @@ const ROOT_FILES = [
   'host-bootstrap.js',
 ];
 const SCRIPTS = [
-  'patch-session-manage.js', 'plugin-manager-patch.js',
-  'onboarding.js', 'patch-deps.js', 'feature-pack-cli.js',
+  'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
+  'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
+  'feature-pack-cli.js',
 ];
 
 // vnext 隔离体系：整个 lib/ 树递归装配（只收运行产物 .js/.cjs/.mjs/.json，
@@ -447,7 +448,7 @@ console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的�
 // 回填之后）逐包计文件数，落 bundle-manifest.json。启动期 static-preview.
 // verifyBundledModules 复查比对 —— 空壳包（升级中断残留）会在 boot 期以
 // 明确文案提示重装，而不是 ERR_MODULE_NOT_FOUND 循环。
-// （Electron 时代由 scripts/after-pack.js 生成；Tauri 化后随 stage 生成。）
+// （旧壳时代由 scripts/after-pack.js 生成；Tauri 化后随 stage 生成。）
 {
   const { createRequire } = await import('node:module');
   const req = createRequire(import.meta.url);

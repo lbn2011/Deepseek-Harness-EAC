@@ -15,7 +15,6 @@ import * as os from 'node:os';
 import type { ExtensionRegistry, ExtensionRecord, ExtensionRuntimeState } from '../../shared/protocol.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
-import { writeJsonAtomic } from '../atomic-json.js';
 
 /** 注册表 schema 版本（结构变更时 +1 并写迁移）。 */
 const SCHEMA_VERSION = 1;
@@ -42,7 +41,11 @@ export function readRegistry(): ExtensionRegistry {
 /** 原子写注册表（tmp + rename；失败记日志不抛出）。 */
 export function writeRegistry(reg: ExtensionRegistry): boolean {
   try {
-    writeJsonAtomic(registryPath(), reg);
+    const file = registryPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = file + '.tmp-' + Date.now();
+    fs.writeFileSync(tmp, JSON.stringify(reg, null, 2) + '\n');
+    fs.renameSync(tmp, file);
     return true;
   } catch (err) {
     log('registry', '注册表写入失败: ' + String((err as Error).message));
@@ -98,35 +101,6 @@ export function upsertLegacyPlugin(p: {
   }
 }
 
-/** 批量版 upsertLegacyPlugin：一次读 + 内存合并 + 一次写。boot 期
- * archivePluginProfiles 对 40+ 插件逐个建档，逐条读写 = 80 次 IO/40 次
- * 原子写（boot 热路径）；语义与逐条版一致（失败整体记一条日志）。 */
-export function upsertLegacyPlugins(
-  ps: { id: string; version?: string; source: 'builtin' | 'market' | 'manual'; enabled?: boolean }[],
-): void {
-  if (ps.length === 0) return;
-  try {
-    const reg = readRegistry();
-    for (const p of ps) {
-      const e = entryOf(reg, p.id, {
-        id: p.id,
-        version: p.version ?? '',
-        source: p.source,
-        risk: 'legacy-cordis',
-        kind: 'legacy',
-        packageSha256: '',
-        permissions: {},
-        rollbackVersions: [],
-      });
-      if (p.enabled !== undefined) e.enabled = p.enabled;
-      reg.plugins[p.id] = e;
-    }
-    writeRegistry(reg);
-  } catch (err) {
-    log('registry', '批量档案登记失败: ' + String((err as Error).message));
-  }
-}
-
 /** 记录一次启动失败归因（Phase 0.3：启动失败记录写入档案）。 */
 export function recordStartFailure(id: string, error: string): void {
   try {
@@ -143,14 +117,13 @@ export function recordStartFailure(id: string, error: string): void {
   }
 }
 
-/** 恢复中心动作成功后清除失败标记。只清 lastError 字段，不动 state：
- * 状态转移一律走状态机（直接置 installed/disabled 会制造 quarantined →
- * installed 之类的非法转移，静默击穿隔离语义）。 */
+/** 恢复中心动作成功后清除失败标记。 */
 export function clearStartFailure(id: string): void {
   try {
     const reg = readRegistry();
     const e = reg.plugins[id] as RegistryEntry | undefined;
     if (!e) return;
+    e.state = e.enabled ? 'installed' : 'disabled';
     delete e.lastError;
     delete e.lastErrorAt;
     reg.plugins[id] = e;

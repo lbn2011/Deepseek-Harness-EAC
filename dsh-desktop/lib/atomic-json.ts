@@ -4,8 +4,8 @@
 // recovery-center register / extension-host sdk / sidecar rescue-integration /
 // companion-sync patch）的落盘语义一致：`JSON.stringify(v, null, 2) + '\n'`。
 
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 export function writeFileAtomic(file: string, content: string | Buffer): void {
