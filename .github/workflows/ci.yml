@@ -120,6 +120,15 @@ jobs:
         working-directory: dsh-desktop
         run: node scripts/fetch-kernel.js
 
+      # 临时诊断：定位 fs-ext 构建 lld 选项（/opt:lldltojobs=2）的注入源
+      - name: 诊断原生构建标志环境
+        if: runner.os == 'Windows'
+        run: |
+          printenv | grep -iE "cflags|cxxflags|ldflags|flto|lld|npm_config_(cflags|ldflags|lto)" || echo "(env 无标志)"
+          npm config get cflags || true
+          npm config get ldflags || true
+          npm config ls 2>&1 | grep -iE "flto|lld|cflags|ldflags" || echo "(npm config 无标志)"
+
       - name: 安装依赖
         run: npm run ci:install
 
