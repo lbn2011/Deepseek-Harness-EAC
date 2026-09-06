@@ -275,7 +275,8 @@ for (const f of SCRIPTS) {
 // （市场插件只能报"功能包 CLI 不可用"）。后续新增随包 CLI 照此成对补充。
 {
   const cli = path.join(staged, 'dsh-desktop', 'scripts', 'feature-pack-cli.js');
-  const core = path.join(staged, 'dsh-desktop', 'lib', 'desktop', 'feature-pack.js');
+  // 我方 lib/ 平铺布局（上游为 lib/desktop/feature-pack.js）。
+  const core = path.join(staged, 'dsh-desktop', 'lib', 'feature-pack.js');
   if (existsSync(cli) !== existsSync(core)) {
     throw new Error('[stage] 功能包链路装配不完整：feature-pack-cli.js 与 feature-pack.js 必须同时入包');
   }

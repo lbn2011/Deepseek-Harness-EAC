@@ -81,10 +81,19 @@ function prepareLldLink(): string {
 
 /** 以 lld-link 为链接器调用 cargo（返回 cargo 退出码）。 */
 function runCargo(sub: string, rest: string[]): number {
-  const env = process.platform === 'win32'
-    ? { ...process.env, RUSTFLAGS: `-C linker=${prepareLldLink()}` }
-    : process.env;
-  const r = spawnSync('cargo', [sub, '--manifest-path', manifest, ...rest], {
+  const env = { ...process.env };
+  if (process.platform === 'win32') {
+    const linker = prepareLldLink();
+    // RUSTFLAGS 按空白拆分：linker/目标路径含空格会被截成多个参数。改用
+    // CARGO_ENCODED_RUSTFLAGS（\x1f 分隔的参数表，无空白歧义），并清掉
+    // RUSTFLAGS 防止双重应用。
+    env.CARGO_ENCODED_RUSTFLAGS = ['-C', `linker=${linker}`].join('\x1f');
+    delete env.RUSTFLAGS;
+  }
+  const args = [sub, '--manifest-path', manifest, ...rest];
+  const target = windowsCargoTarget();
+  if (target !== undefined) args.push('--target', target);
+  const r = spawnSync('cargo', args, {
     stdio: 'inherit',
     env,
     cwd: crateRoot,
