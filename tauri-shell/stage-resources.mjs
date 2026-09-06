@@ -329,18 +329,26 @@ if (existsSync(npmCache)) {
 // 依赖/overrides 全部指向 file:vendor/kernel/<version>/*.tgz）。staged 树的
 // npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
 const kernelCache = path.join(dd, 'vendor', 'kernel');
-if (existsSync(kernelCache)) {
-  copyKernelCacheForTarget(
-    kernelCache,
-    path.join(staged, 'dsh-desktop', 'vendor', 'kernel'),
-    targetPlatform,
-  );
-  console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
+// 内核依赖两种形态：上游 vendored tarball（package.json 引用
+// file:vendor/kernel/…）与我方 registry 钉版（0.1.1-rc.2，无 file: 引用）。
+// 仅在 manifest 确实引用 vendored 内核时才要求缓存存在。
+const pkgManifest = readFileSync(path.join(dd, 'package.json'), 'utf8');
+if (pkgManifest.includes('file:vendor/kernel/')) {
+  if (existsSync(kernelCache)) {
+    copyKernelCacheForTarget(
+      kernelCache,
+      path.join(staged, 'dsh-desktop', 'vendor', 'kernel'),
+      targetPlatform,
+    );
+    console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
+  } else {
+    throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
+  }
 } else {
-  throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
+  console.log('[stage] 内核为 registry 钉版（无 file:vendor/kernel 引用），跳过 tarball 缓存拷贝');
 }
 
-console.log('[stage] 生产 node_modules（npm ci --omit=dev --ignore-scripts，首次较慢）');
+console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
 if (!keepStagedNm) {
   const stagedDesktop = path.join(staged, 'dsh-desktop');
@@ -350,9 +358,9 @@ if (!keepStagedNm) {
     // npm 11 会把 overrides 里的相对 file: 依赖基于传递依赖目录解析，继而
     // 错找 node_modules/<pkg>/vendor/kernel。安装期改为绝对 staging 路径；
     // finally 恢复相对清单，避免把构建机路径写进最终载荷。
-    // stagedDesktop 只含运行时文件，不含 tsconfig；生命周期脚本既无法完成，
-    // 也会扩大第三方 install/postinstall 的执行面。依赖补丁在下方显式重放。
-    execSync('npm ci --omit=dev --ignore-scripts --no-audit --no-fund', { cwd: stagedDesktop, stdio: 'inherit' });
+    // 不用 --ignore-scripts：我方运行时依赖（node-pty / koffi）需要安装期
+    // 原生构建/预布线；依赖补丁在下方显式重放（与上游回填模式互斥，二选一）。
+    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: stagedDesktop, stdio: 'inherit' });
   });
 }
 
@@ -428,18 +436,16 @@ if (existsSync(vendoredBashFix)) {
 }
 
 // fs-ext 原生模块回填（内核 0.1.3 新依赖）：session-persistence-jsonl 的会话
-// 锁依赖 fs_ext.node（flock）。staging 用 npm ci --ignore-scripts 安装，fs-ext
-// 的 node-gyp 构建脚本被跳过 → staged 树缺 build/Release/fs_ext.node →
-// session-persistence-jsonl 装载失败 → dsh web 退出码 1（真实环境「DSH 服务
-// 已停止」）。从 dev 树回填已编译产物（同 vendored 回填模式；交叉打包已被
-// 上方 targetPlatform===process.platform 门禁拒绝，这里产物必属本机平台）。
+// 锁依赖 fs_ext.node（flock）。我方 6.0 内核钉在 0.1.1-rc.2（无 fs-ext 依赖、
+// dev 树无该包），仅当 dev 树存在已编译产物时回填，缺省跳过不报错 ——
+// 上游树才需要强制存在。
 const fsExtNative = path.join(dd, 'node_modules', 'fs-ext', 'build');
 const fsExtRelease = path.join(fsExtNative, 'Release');
 if (existsSync(path.join(fsExtRelease, 'fs_ext.node'))) {
   cpSync(fsExtRelease, path.join(nmDest, 'fs-ext', 'build', 'Release'), { recursive: true });
   console.log('[stage] 已回填 fs-ext 原生运行时（build/Release/fs_ext.node）');
 } else {
-  throw new Error('[stage] dev 树缺少 fs-ext 原生构建（node_modules/fs-ext/build/Release/fs_ext.node）——先在 dev 树 npm install 触发 node-gyp 编译，或换用支持预编译分发的 fs-ext 版本');
+  console.log('[stage] 跳过 fs-ext 回填（dev 树无 fs-ext，registry 钉版内核不需要）');
 }
 
 const sanitizedClients = sanitizeClientBuildPaths(nmDest);
