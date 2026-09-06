@@ -335,5 +335,13 @@
     "@deepseek-ai/schemastery": "file:vendor/kernel/0.1.3-alpha.1/deepseek-ai-schemastery-3.18.2.tgz",
     "glob": "10.5.0",
     "qs": "6.16.0"
+  },
+  "allowScripts": {
+    "@deepseek-ai/dsh-subprocess-local@0.1.3-alpha.1": true,
+    "@google/genai@1.52.0": true,
+    "koffi@3.1.5": true,
+    "node-pty@1.2.0-beta.15": true,
+    "protobufjs@7.6.6": true,
+    "fs-ext@2.1.1": true
   }
 }

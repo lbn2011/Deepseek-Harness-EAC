@@ -230,7 +230,14 @@ function main() {
     fs.rmSync(TMP, { recursive: true, force: true });
     fs.mkdirSync(TMP, { recursive: true });
     console.log('fetch-kernel: pnpm install（首次较慢）');
-    run(process.execPath, [pnpm.entry, 'install'], src, baseEnv);
+    // Windows：--ignore-scripts 跳过 fs-ext 等 node-gyp 原生构建 —— 内核构建
+    // 配置会向 MSVC 注入 lld 专属选项（-flto=thin / /opt:lldltojobs=2），在
+    // windows-2025-vs2026 镜像上必挂（LNK1117）。tarball 只打包 @deepseek-ai
+    // 包源码与 dist，不含原生产物；staged 树的原生依赖由后续 npm ci 按平台构建。
+    const installArgs = process.platform === 'win32'
+        ? [pnpm.entry, 'install', '--ignore-scripts']
+        : [pnpm.entry, 'install'];
+    run(process.execPath, installArgs, src, baseEnv);
     console.log('fetch-kernel: build:official');
     run(process.execPath, [pnpm.entry, 'run', 'build:official'], src, baseEnv);
     console.log('fetch-kernel: pack dsh / vendor');
