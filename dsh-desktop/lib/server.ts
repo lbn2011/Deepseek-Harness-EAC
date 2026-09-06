@@ -192,6 +192,10 @@ export async function startServer(
       );
       return;
     }
+    // logsDir 兜底创建：boot() 会建，但 sidecar 直启（冒烟/容器探活）不经
+    // boot() 全链 —— 缺目录会让 createWriteStream ENOENT，内核早期崩溃的
+    // stderr 无处落盘（Linux 容器冒烟实测）。
+    fs.mkdirSync(state.logsDir, { recursive: true });
     const out = fs.createWriteStream(path.join(state.logsDir, 'dsh-web.log'), { flags: 'a' });
     log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port ${webPort} --no-open`);
     // --use-system-ca: 让 dsh web 进程信任系统证书库（代理/MITM 场景下内置 node 的
