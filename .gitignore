@@ -53,6 +53,11 @@ dsh-desktop/data/
 # 一次性调试目录
 # 一次性调试目录
 /tmp-p2boot/
+.tmp-*/
+.tmp-*.tgz
+.tmp-*.json
+.tmp-*.gyp
+.tmp-*.txt
 /tmp-ui-verify-installed/
 
 # ---- 本地工具状态目录（不入库） ----

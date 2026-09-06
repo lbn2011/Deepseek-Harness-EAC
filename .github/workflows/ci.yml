@@ -28,8 +28,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # vendored 内核 tarball 预生成（ubuntu）：fs-ext 原生构建在 Windows
+  # runner（windows-2025-vs2026 镜像）会被内核构建配置注入的 lld 选项
+  # （/opt:lldltojobs=2）打断 —— tarball 是平台无关的 npm 包，在 ubuntu
+  # 生成一次，双平台经 cache 恢复后 fetch-kernel 自动跳过重建。
+  kernel-tarballs:
+    name: 内核 tarball 预生成（ubuntu）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: dsh-desktop
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - name: 安装 pnpm（内核 packageManager 钉定版本）
+        run: |
+          corepack disable
+          npm install -g pnpm@11.7.0
+      - name: 恢复 vendored 内核 tarball 缓存
+        uses: actions/cache@v4
+        with:
+          path: dsh-desktop/vendor/kernel
+          key: dsh-vendored-kernel-0.1.3-alpha.1-v1
+      - name: 生成 vendored 内核 tarball（缓存命中时自动跳过）
+        run: node scripts/fetch-kernel.js
+      - name: 保存 tarball 缓存
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: dsh-desktop/vendor/kernel
+          key: dsh-vendored-kernel-0.1.3-alpha.1-v1
+
   build:
     name: Tauri ${{ matrix.os }} x64
+    needs: kernel-tarballs
     strategy:
       fail-fast: false
       matrix:
@@ -67,12 +104,13 @@ jobs:
             dsh-desktop/native/snapshot -> target
           key: ${{ matrix.os }}-x64
 
-      - name: 安装 pnpm（内核 packageManager 钉定版本）
-        run: |
-          corepack disable
-          npm install -g pnpm@11.7.0
+      - name: 恢复 vendored 内核 tarball 缓存（kernel-tarballs job 预生成）
+        uses: actions/cache@v4
+        with:
+          path: dsh-desktop/vendor/kernel
+          key: dsh-vendored-kernel-0.1.3-alpha.1-v1
 
-      - name: 生成 vendored 内核 tarball
+      - name: 生成 vendored 内核 tarball（缓存命中时自动跳过）
         working-directory: dsh-desktop
         run: node scripts/fetch-kernel.js
 
