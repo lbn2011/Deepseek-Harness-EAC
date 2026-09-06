@@ -109,6 +109,12 @@ jobs:
         with:
           path: dsh-desktop/vendor/kernel
           key: dsh-vendored-kernel-0.1.3-alpha.1-v1
+          restore-keys: dsh-vendored-kernel-
+
+      - name: 安装 pnpm（缓存未命中时 fetch-kernel 需要）
+        run: |
+          corepack disable
+          npm install -g pnpm@11.7.0
 
       - name: 生成 vendored 内核 tarball（缓存命中时自动跳过）
         working-directory: dsh-desktop

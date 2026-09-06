@@ -21,7 +21,7 @@
     "test:native": "node scripts/build-native.js test && node scripts/build-native.js test snapshot",
     "clippy:native": "node scripts/build-native.js clippy && node scripts/build-native.js clippy snapshot",
     "tauri:stage": "node ../tauri-shell/stage-resources.mjs",
-    "tauri:build": "npm run tauri:stage && cd ../tauri-shell && tauri build",
+    "tauri:build": "npm run tauri:stage && cd ../tauri-shell && npx -y @tauri-apps/cli@2 build",
     "bench:boot": "node scripts/bench-boot.js",
     "pretest": "npm run build",
     "test": "node scripts/test-runner.js test/*.test.ts --test-timeout=120000 --test-force-exit"
