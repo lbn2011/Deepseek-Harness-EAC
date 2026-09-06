@@ -318,7 +318,10 @@ export function computeSha256(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const h = crypto.createHash('sha256');
     const rs = fs.createReadStream(file);
-    rs.on('data', (c: Buffer) => h.update(c));
+    // 回调入参放宽为 unknown：0.1.3 依赖链带入的新 Node 流类型把 data
+    // 事件签名声明的更宽（string | Buffer<ArrayBufferLike>），按字面签名
+    // 反而不兼容（CI 实测 TS2345）。
+    rs.on('data', (c: unknown) => h.update(c as Buffer));
     rs.on('error', reject);
     rs.on('end', () => resolve(h.digest('hex')));
   });
