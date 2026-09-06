@@ -268,7 +268,6 @@ fn hu_kill_pid_tree(pid: u32) {
 /// sidecar 重生（shell.restart-sidecar 消费端）：等待退出 → 闸门计数 →
 /// spawn + 接通知环 → 重发 boot.start（boot.web-ready 通知处理器负责导航）。
 async fn hu_respawn_sidecar(app: tauri::AppHandle) {
-    use tauri::Manager;
     let state = BRIDGE.get_or_init(|| BridgeState {
         sidecar: Arc::new(AMutex::new(None)),
     });
@@ -1702,7 +1701,7 @@ fn run_bridge_test() -> i32 {
         .build()
         .expect("tokio runtime");
     let code = rt.block_on(async move {
-        let mut sc = match Sidecar::spawn().await {
+        let mut sc = match Sidecar::spawn(None).await {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[bridge] FAIL spawn: {}", e);
