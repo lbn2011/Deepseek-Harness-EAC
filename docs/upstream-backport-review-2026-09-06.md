@@ -7,6 +7,10 @@
 
 ## 高价值候选（疑似我方真实缺口）
 
+> **2026-09-06 补记**：合并后 CI 暴露上游 main.rs 与我方 main.rs（含热更新
+> L1 改动）语义互斥（12 处断伤），已整体恢复我方 main.rs。下列 Rust 侧条目
+> 因此**仍未采纳**，需按条人工移植（对应上游提交见 §上文提交号）。
+
 | 上游提交 | 内容 | 触碰面 | 评估要点 |
 | --- | --- | --- | --- |
 | `1a05c17` | installer：MessageBox /SD 必须紧跟文本（makensis Usage） | installer-hooks.nsh | 我方 installer-hooks.nsh 若有 MessageBox 带 /SD 需核对参数顺序 |
