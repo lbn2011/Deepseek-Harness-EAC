@@ -14,6 +14,7 @@
     "test:native": "node scripts/build-native.js test && node scripts/build-native.js test snapshot",
     "build:native": "node scripts/build-native.js build && node scripts/build-native.js build snapshot",
     "clippy:native": "node scripts/build-native.js clippy && node scripts/build-native.js clippy snapshot",
+    "ci:install": "node scripts/npm-ci-with-kernel.mjs",
     "tauri:stage": "node ../tauri-shell/stage-resources.mjs",
     "tauri:build": "npm run tauri:stage && cd ../tauri-shell && tauri build",
     "fetch-node": "npm run build && node scripts/fetch-node.js",
