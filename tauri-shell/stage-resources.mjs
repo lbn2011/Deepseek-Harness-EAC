@@ -40,7 +40,7 @@ if (targetPlatform !== process.platform) {
 // 人工同步：新增根模块要加进来（旧壳时代的 main.js / preload.js 已废弃，不再打包）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
-  'balance.js', 'session-watcher.js', 'profile-module-heal.js',
+  'balance.js', 'session-watcher.js', 'session-encoding-heal.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
