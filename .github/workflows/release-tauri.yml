@@ -79,6 +79,15 @@ jobs:
             dsh-desktop/native/snapshot -> target
           key: release-${{ matrix.os }}-x64
 
+      - name: 安装 pnpm（内核 packageManager 钉定版本）
+        run: |
+          corepack disable
+          npm install -g pnpm@11.7.0
+
+      - name: 生成 vendored 内核 tarball
+        working-directory: dsh-desktop
+        run: node scripts/fetch-kernel.js
+
       - name: 安装依赖
         run: npm ci
 
