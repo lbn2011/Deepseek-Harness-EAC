@@ -375,10 +375,17 @@ export function watchServerProc(
       const intentional = state.restartingServer || state.serverProc !== proc;
       if (state.serverProc === proc) state.serverProc = null;
       if (!handedOff) {
+        // 失败消息附带 dsh-web.log 尾部：sidecar 直启（冒烟/容器探活）场景
+        // 没有 UI 错误详情面板，日志留在装机里等于不可见（Linux 容器冒烟实测）。
+        let tail = '';
+        try {
+          tail = fs.readFileSync(path.join(state.logsDir, 'dsh-web.log'), 'utf8').slice(-6000);
+        } catch { /* 日志不存在时保持仅有路径的报错 */ }
         finish(
           reject,
           new Error(
-            `dsh web 启动失败（退出码 ${code}）。日志: ${path.join(state.logsDir, 'dsh-web.log')}`,
+            `dsh web 启动失败（退出码 ${code}）。日志: ${path.join(state.logsDir, 'dsh-web.log')}` +
+              (tail ? `\n[dsh-web.log 尾部]\n${tail}` : ''),
           ),
         );
       }
