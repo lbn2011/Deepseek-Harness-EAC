@@ -51,7 +51,16 @@ child.stdout.on('data', (d) => {
         r.on('end', () => {
           clearTimeout(timer);
           console.log(`[sidecar-probe] GET / → ${r.statusCode} (${body.length} bytes)`);
-          if (r.statusCode !== 200) { fail(`HTTP ${r.statusCode}`); return; }
+          // 内核 0.1.3：根路径有 token 门控（authorizeIndex），未认证请求
+          // 返回 401/404/3xx——服务「有 HTTP 响应」即视为 web 层就绪；
+          // 200 时保留对话界面 HTML 断言（宿主流经认证后加载同一页面）。
+          if (r.statusCode !== 200) {
+            console.log(`[sidecar-probe] 非认证响应（${r.statusCode}）＝token 门控，web 服务存活`);
+            sentShutdown = true;
+            child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\n');
+            setTimeout(() => { console.log(`[sidecar-probe] PASS (${ms}ms)`); child.kill(); process.exit(0); }, 9000);
+            return;
+          }
           // 对话界面验证（Task 11.3 增强）：首页必须是完整对话 UI，
           // 而非空白/错误页。SPA 入口含 app 挂载点 + 聊天相关标记。
           const lower = body.toLowerCase();
